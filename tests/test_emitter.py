@@ -281,6 +281,74 @@ def foo(p: Path) -> None: ...
         assert "from pathlib import Path" in stub
 
 
+class TestTypingAssignments:
+    def test_typevar_emitted_as_assignment(self):
+        source = """
+from typing import TypeVar
+T = TypeVar("T", bound=int)
+"""
+        stub = _generate_stub(source)
+        assert "T = TypeVar('T', bound=int)" in stub
+        assert "T:" not in stub
+
+    def test_paramspec_emitted_as_assignment(self):
+        source = """
+from typing import ParamSpec
+P = ParamSpec("P")
+"""
+        stub = _generate_stub(source)
+        assert "P = ParamSpec('P')" in stub
+
+
+class TestEnumEmission:
+    def test_enum_members_as_assignments(self):
+        source = """
+from enum import Enum, auto
+class Color(Enum):
+    RED = auto()
+    GREEN = auto()
+    BLUE = auto()
+"""
+        stub = _generate_stub(source)
+        assert "RED = ..." in stub
+        assert "GREEN = ..." in stub
+        assert "BLUE = ..." in stub
+        assert "RED:" not in stub
+
+    def test_enum_with_methods(self):
+        source = """
+from enum import Enum
+class Status(Enum):
+    ACTIVE = 1
+    INACTIVE = 2
+    def is_active(self) -> bool: ...
+"""
+        stub = _generate_stub(source)
+        assert "ACTIVE = ..." in stub
+        assert "def is_active(self) -> bool: ..." in stub
+
+
+class TestReExport:
+    def test_all_names_get_as_alias(self):
+        source = """
+from .sub import ClassA, ClassB
+from .utils import helper
+__all__ = ["ClassA", "ClassB", "helper"]
+"""
+        stub = _generate_stub(source)
+        assert "ClassA as ClassA" in stub
+        assert "ClassB as ClassB" in stub
+        assert "helper as helper" in stub
+
+    def test_no_all_no_alias(self):
+        source = """
+from os.path import join, exists
+"""
+        stub = _generate_stub(source)
+        assert "from os.path import join, exists" in stub
+        assert "as join" not in stub
+
+
 class TestConditionalBlock:
     def test_version_check(self):
         source = """

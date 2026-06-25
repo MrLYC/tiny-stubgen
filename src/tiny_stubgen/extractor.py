@@ -288,6 +288,22 @@ class StubExtractor(ast.NodeVisitor):
             b in ("TypedDict", "typing.TypedDict", "typing_extensions.TypedDict")
             for b in bases
         )
+        is_enum = any(
+            b
+            in (
+                "Enum",
+                "enum.Enum",
+                "IntEnum",
+                "enum.IntEnum",
+                "StrEnum",
+                "enum.StrEnum",
+                "Flag",
+                "enum.Flag",
+                "IntFlag",
+                "enum.IntFlag",
+            )
+            for b in bases
+        )
 
         # Extract class body
         for stmt in node.body:
@@ -311,7 +327,12 @@ class StubExtractor(ast.NodeVisitor):
                     cls.attributes.append(attr)
 
             elif isinstance(stmt, ast.Assign):
-                attrs = self._extract_class_assign_attrs(stmt, node.name, cls)
+                attrs = self._extract_class_assign_attrs(
+                    stmt,
+                    node.name,
+                    cls,
+                    is_enum=is_enum,
+                )
                 cls.attributes.extend(attrs)
 
             elif isinstance(stmt, ast.ClassDef):
@@ -409,7 +430,12 @@ class StubExtractor(ast.NodeVisitor):
         )
 
     def _extract_class_assign_attrs(
-        self, node: ast.Assign, class_name: str, cls: ClassInfo
+        self,
+        node: ast.Assign,
+        class_name: str,
+        cls: ClassInfo,
+        *,
+        is_enum: bool = False,
     ) -> list[AttributeInfo]:
         """Extract unannotated class attributes (x = value)."""
         attrs = []
@@ -428,6 +454,17 @@ class StubExtractor(ast.NodeVisitor):
                 if self._is_property_call(node.value):
                     self._add_property_from_call(name, node.value, cls)
                     self._seen_attrs.setdefault(class_name, set()).add(name)
+                    continue
+
+                # Enum member: emit as `name = ...` (not a type annotation)
+                if is_enum and not name.startswith("_"):
+                    self._seen_attrs.setdefault(class_name, set()).add(name)
+                    attrs.append(
+                        AttributeInfo(
+                            name=name,
+                            is_enum_member=True,
+                        )
+                    )
                     continue
 
                 annotation = infer_type_from_value(node.value)
@@ -543,12 +580,41 @@ class StubExtractor(ast.NodeVisitor):
             is_type_alias=is_type_alias,
         )
 
+    # typing constructs that must be preserved as assignments
+    _TYPING_ASSIGNMENT_NAMES = frozenset(
+        {
+            "TypeVar",
+            "ParamSpec",
+            "TypeVarTuple",
+        }
+    )
+
+    def _is_typing_assignment(self, node: ast.expr) -> bool:
+        """Check if node is a TypeVar/ParamSpec/TypeVarTuple call."""
+        if not isinstance(node, ast.Call):
+            return False
+        func = node.func
+        if isinstance(func, ast.Name):
+            return func.id in self._TYPING_ASSIGNMENT_NAMES
+        if isinstance(func, ast.Attribute):
+            return func.attr in self._TYPING_ASSIGNMENT_NAMES
+        return False
+
     def _handle_assign(self, node: ast.Assign) -> None:
         """Handle module-level assignment (may be __all__ or variable)."""
         for target in node.targets:
             if isinstance(target, ast.Name):
                 if target.id == "__all__":
                     self._parse_all(node.value)
+                elif self._is_typing_assignment(node.value):
+                    # TypeVar, ParamSpec, TypeVarTuple — preserve as assignment
+                    self._remove_name(target.id)
+                    self._module.variables.append(
+                        VariableInfo(
+                            name=target.id,
+                            assign_value=ast.unparse(node.value),
+                        )
+                    )
                 else:
                     annotation = infer_type_from_value(node.value)
                     # Check for type alias pattern: X = Union[...], X = int | str

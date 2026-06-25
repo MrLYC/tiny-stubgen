@@ -197,16 +197,26 @@ class StubEmitter:
 
     def _emit_import(self, imp: ImportInfo) -> None:
         """Emit a single import statement."""
+        # Names in __all__ that are re-exported need explicit `as X` form
+        # in stubs (PEP 484: implicit re-exports require the `as` alias)
+        re_exported = set(self.module.all_names) if self.module.all_names else set()
+
         if imp.is_star:
             prefix = "." * imp.level if imp.level else ""
             self._line(f"from {prefix}{imp.module} import *")
         elif imp.is_from_import:
             prefix = "." * imp.level
             module = f"{prefix}{imp.module}" if imp.module else prefix
-            names_str = ", ".join(
-                f"{name} as {alias}" if alias else name for name, alias in imp.names
-            )
-            self._line(f"from {module} import {names_str}")
+            parts = []
+            for name, alias in imp.names:
+                if alias:
+                    parts.append(f"{name} as {alias}")
+                elif name in re_exported:
+                    # Explicit re-export: `from X import Y as Y`
+                    parts.append(f"{name} as {name}")
+                else:
+                    parts.append(name)
+            self._line(f"from {module} import {', '.join(parts)}")
         else:
             for name, alias in imp.names:
                 if alias:
@@ -218,7 +228,10 @@ class StubEmitter:
 
     def _emit_variable(self, var: VariableInfo) -> None:
         """Emit a module-level variable declaration."""
-        if var.is_type_alias:
+        if var.assign_value is not None:
+            # Assignment form: TypeVar, ParamSpec, etc.
+            self._line(f"{var.name} = {var.assign_value}")
+        elif var.is_type_alias:
             if var.annotation and "TypeAlias" not in var.annotation:
                 self._line(f"{var.name}: TypeAlias = {var.annotation}")
             else:
@@ -371,7 +384,9 @@ class StubEmitter:
 
     def _emit_attribute(self, attr: AttributeInfo) -> None:
         """Emit a class attribute declaration."""
-        if attr.annotation:
+        if attr.is_enum_member:
+            self._line(f"{attr.name} = ...")
+        elif attr.annotation:
             self._line(f"{attr.name}: {attr.annotation}")
         else:
             self._line(f"{attr.name}: Any")

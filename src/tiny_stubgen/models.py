@@ -77,6 +77,7 @@ class AttributeInfo:
     is_class_var: bool = False
     is_final: bool = False
     default_value: str | None = None  # for ClassVar with default
+    is_enum_member: bool = False  # Enum members: emit as `name = ...`
 
 
 @dataclass
@@ -100,6 +101,7 @@ class VariableInfo:
     annotation: str | None = None
     is_final: bool = False
     is_type_alias: bool = False
+    assign_value: str | None = None  # emit as `name = value` (TypeVar, etc.)
 
 
 @dataclass

@@ -466,6 +466,86 @@ class Foo:
         assert deleter[0].name == "x"
 
 
+class TestTypingAssignments:
+    def test_typevar_preserved(self):
+        source = """
+from typing import TypeVar
+T = TypeVar("T", bound=int)
+"""
+        mod = _extract(source)
+        var = [v for v in mod.variables if v.name == "T"]
+        assert len(var) == 1
+        assert var[0].assign_value == "TypeVar('T', bound=int)"
+        assert var[0].annotation is None
+
+    def test_paramspec_preserved(self):
+        source = """
+from typing import ParamSpec
+P = ParamSpec("P")
+"""
+        mod = _extract(source)
+        var = [v for v in mod.variables if v.name == "P"]
+        assert len(var) == 1
+        assert var[0].assign_value == "ParamSpec('P')"
+
+    def test_typevar_via_module(self):
+        source = """
+import typing
+T = typing.TypeVar("T")
+"""
+        mod = _extract(source)
+        var = [v for v in mod.variables if v.name == "T"]
+        assert len(var) == 1
+        assert "TypeVar" in var[0].assign_value
+
+    def test_regular_call_not_treated_as_typevar(self):
+        source = "x = SomeClass()"
+        mod = _extract(source)
+        assert mod.variables[0].assign_value is None
+        assert mod.variables[0].annotation == "SomeClass"
+
+
+class TestEnumMembers:
+    def test_enum_members_marked(self):
+        source = """
+from enum import Enum, auto
+class Color(Enum):
+    RED = auto()
+    GREEN = auto()
+    BLUE = auto()
+"""
+        mod = _extract(source)
+        cls = mod.classes[0]
+        for attr in cls.attributes:
+            assert attr.is_enum_member is True
+            assert attr.annotation is None
+
+    def test_enum_private_not_marked(self):
+        source = """
+from enum import Enum
+class Status(Enum):
+    ACTIVE = 1
+    _ignore_ = ["TEMP"]
+"""
+        mod = _extract(source)
+        cls = mod.classes[0]
+        members = [a for a in cls.attributes if a.is_enum_member]
+        assert len(members) == 1
+        assert members[0].name == "ACTIVE"
+
+    def test_enum_methods_preserved(self):
+        source = """
+from enum import Enum
+class Color(Enum):
+    RED = 1
+    def describe(self) -> str: ...
+"""
+        mod = _extract(source)
+        cls = mod.classes[0]
+        assert len(cls.methods) == 1
+        assert cls.methods[0].name == "describe"
+
+
 class TestConditionalBlocks:
     def test_version_check(self):
         source = """

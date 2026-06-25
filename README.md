@@ -103,7 +103,7 @@ def greet(name: Any, greeting: str = ...) -> str: ...
 
 ## 转换效果展示
 
-[`examples/`](examples/) 目录包含 7 个精心设计的示例，每个 `.py` 文件都有对应的 `.pyi` 文件，直观展示转换效果：
+[`examples/`](examples/) 目录包含 9 个精心设计的示例，每个 `.py` 文件都有对应的 `.pyi` 文件，直观展示转换效果：
 
 | 示例 | 演示内容 |
 |------|----------|
@@ -114,6 +114,8 @@ def greet(name: Any, greeting: str = ...) -> str: ...
 | [`05_dataclasses`](examples/05_dataclasses.py) | dataclass、NamedTuple、TypedDict |
 | [`06_imports_and_exports`](examples/06_imports_and_exports.py) | 导入处理、`__all__` 导出控制、TYPE_CHECKING |
 | [`07_conditionals`](examples/07_conditionals.py) | sys.platform / sys.version_info 条件块 |
+| [`08_generics`](examples/08_generics.py) | TypeVar、ParamSpec、Generic、Protocol |
+| [`09_enums`](examples/09_enums.py) | Enum、IntEnum、auto() 枚举类型 |
 
 可随时重新生成所有示例的 stub 文件：
 
