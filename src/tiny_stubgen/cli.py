@@ -6,10 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import __version__
-from .emitter import StubEmitter
-from .extractor import StubExtractor
-from .resolver import postprocess
+from . import __version__, generate_stub
 from .utils import walk_python_files
 
 
@@ -87,11 +84,11 @@ def process_file(
         return False
 
     try:
-        extractor = StubExtractor(source, module_name=input_path.stem)
-        module = extractor.extract()
-        module = postprocess(module, include_private=include_private)
-        emitter = StubEmitter(module, include_private=include_private)
-        stub_content = emitter.emit()
+        stub_content = generate_stub(
+            source,
+            module_name=input_path.stem,
+            include_private=include_private,
+        )
     except SyntaxError as e:
         print(f"  syntax error in {input_path}: {e}", file=sys.stderr)
         return False

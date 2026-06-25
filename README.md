@@ -155,6 +155,30 @@ class Config:
 def greet(name: Any, greeting: str = ...) -> str: ...
 ```
 
+### 作为 Python 库使用
+
+无需落盘，直接在内存中将源码转为 stub 内容：
+
+```python
+from tiny_stubgen import generate_stub
+
+source = open("example.py").read()
+stub = generate_stub(source)
+print(stub)
+```
+
+也可以导入核心组件自行组装管线：
+
+```python
+from tiny_stubgen import StubExtractor, StubEmitter, postprocess
+
+extractor = StubExtractor(source)
+module = extractor.extract()
+module = postprocess(module, include_private=True)
+emitter = StubEmitter(module, include_private=True)
+print(emitter.emit())
+```
+
 ## CLI 参数
 
 | 参数 | 说明 |
