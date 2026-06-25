@@ -1,2 +1,0 @@
-[console_scripts]
-tiny-stubgen = tiny_stubgen.cli:main
