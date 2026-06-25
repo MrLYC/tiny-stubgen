@@ -2,6 +2,18 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/)。
 
+## [0.2.0] - 2026-06-26
+
+### Added
+
+- 公开 Python API：`generate_stub(source)` 一行调用，纯内存生成 stub，无需落盘
+- 导出核心组件：`StubExtractor`、`StubEmitter`、`postprocess`，支持高级管线组装
+- README 增加"作为库使用"章节和代码示例
+
+### Changed
+
+- CLI 内部重构为使用 `generate_stub`，消除重复代码
+
 ## [0.1.1] - 2026-06-26
 
 ### Improved
@@ -37,5 +49,6 @@
 - GitHub Actions CI（lint + test + examples 同步检查）
 - PyPI 自动发布（tag 触发）
 
+[0.2.0]: https://github.com/MrLYC/tiny-stubgen/releases/tag/v0.2.0
 [0.1.1]: https://github.com/MrLYC/tiny-stubgen/releases/tag/v0.1.1
 [0.1.0]: https://github.com/MrLYC/tiny-stubgen/releases/tag/v0.1.0
