@@ -338,9 +338,14 @@ class StubEmitter:
 
         has_body = False
 
-        # Emit attributes (filter private unless requested)
+        # Emit attributes (filter private unless requested, keep ClassVar/Final)
         for attr in cls.attributes:
-            if not self.include_private and _is_private(attr.name):
+            if (
+                not self.include_private
+                and _is_private(attr.name)
+                and not attr.is_class_var
+                and not attr.is_final
+            ):
                 continue
             self._emit_attribute(attr)
             has_body = True

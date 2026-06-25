@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 from .models import ImportInfo, ModuleStub
 from .utils import is_public
 
@@ -19,6 +21,20 @@ def resolve_exports(module: ModuleStub) -> ModuleStub:
         module.classes = [c for c in module.classes if is_public(c.name)]
     else:
         allowed = set(module.all_names)
+
+        # Warn about names in __all__ that don't exist in the module
+        defined = (
+            {v.name for v in module.variables}
+            | {f.name for f in module.functions}
+            | {c.name for c in module.classes}
+        )
+        missing = allowed - defined
+        for name in sorted(missing):
+            print(
+                f"  warning: __all__ references undefined name {name!r}",
+                file=sys.stderr,
+            )
+
         module.variables = [v for v in module.variables if v.name in allowed]
         module.functions = [f for f in module.functions if f.name in allowed]
         module.classes = [c for c in module.classes if c.name in allowed]

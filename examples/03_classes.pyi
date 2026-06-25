@@ -39,6 +39,7 @@ class Registry:
     def lookup(self, key: str) -> 'Registry.Entry | None': ...
 
 class Singleton:
+    _instance: ClassVar['Singleton | None']
 
     def __init__(self, value: int) -> None: ...
 

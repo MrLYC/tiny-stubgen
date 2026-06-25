@@ -312,6 +312,160 @@ __all__.extend(["bar", "baz"])
         assert mod.all_names == ["foo", "bar", "baz"]
 
 
+class TestSlots:
+    def test_slots_single_string(self):
+        source = """
+class Foo:
+    __slots__ = "_x"
+    def __init__(self):
+        self._x = 1
+"""
+        mod = _extract(source)
+        cls = mod.classes[0]
+        attr_names = {a.name for a in cls.attributes}
+        assert "_x" in attr_names
+
+    def test_slots_tuple(self):
+        source = """
+class Foo:
+    __slots__ = ("a", "b")
+    def __init__(self):
+        self.a = 1
+        self.b = 2
+"""
+        mod = _extract(source)
+        cls = mod.classes[0]
+        attr_names = {a.name for a in cls.attributes}
+        assert {"a", "b"} <= attr_names
+
+
+class TestPropertyCall:
+    def test_property_none_getter(self):
+        source = """
+class Foo:
+    x = property(None, lambda self, v: None)
+"""
+        mod = _extract(source)
+        cls = mod.classes[0]
+        getter_count = sum(
+            1
+            for m in cls.methods
+            if m.name == "x" and DecoratorKind.PROPERTY in m.decorators
+        )
+        assert getter_count == 0
+        setter_count = sum(
+            1
+            for m in cls.methods
+            if m.name == "x" and DecoratorKind.SETTER in m.decorators
+        )
+        assert setter_count == 1
+
+    def test_property_with_getter_and_setter(self):
+        source = """
+class Foo:
+    x = property(lambda self: self._x, lambda self, v: None)
+"""
+        mod = _extract(source)
+        cls = mod.classes[0]
+        getter_count = sum(
+            1
+            for m in cls.methods
+            if m.name == "x" and DecoratorKind.PROPERTY in m.decorators
+        )
+        setter_count = sum(
+            1
+            for m in cls.methods
+            if m.name == "x" and DecoratorKind.SETTER in m.decorators
+        )
+        assert getter_count == 1
+        assert setter_count == 1
+
+
+class TestReturnTypeInference:
+    def test_no_return_infers_none(self):
+        mod = _extract("def foo(): pass")
+        assert mod.functions[0].return_type == "None"
+
+    def test_return_value_no_inference(self):
+        mod = _extract("def foo(): return 42")
+        assert mod.functions[0].return_type is None
+
+    def test_return_none_infers_none(self):
+        mod = _extract("def foo(): return None")
+        assert mod.functions[0].return_type == "None"
+
+    def test_explicit_annotation_preserved(self):
+        mod = _extract("def foo() -> int: return 42")
+        assert mod.functions[0].return_type == "int"
+
+    def test_nested_function_return_not_counted(self):
+        source = """
+def outer():
+    def inner():
+        return 42
+    inner()
+"""
+        mod = _extract(source)
+        assert mod.functions[0].return_type == "None"
+
+
+class TestRedefinition:
+    def test_variable_overrides_function(self):
+        source = """
+def foo():
+    return 42
+
+foo = 1
+"""
+        mod = _extract(source)
+        assert len(mod.functions) == 0
+        assert len(mod.variables) == 1
+        assert mod.variables[0].name == "foo"
+
+    def test_function_overrides_variable(self):
+        source = """
+foo = 1
+
+def foo():
+    return 42
+"""
+        mod = _extract(source)
+        assert len(mod.variables) == 0
+        assert len(mod.functions) == 1
+        assert mod.functions[0].name == "foo"
+
+    def test_class_overrides_function(self):
+        source = """
+def Foo():
+    pass
+
+class Foo:
+    x: int = 1
+"""
+        mod = _extract(source)
+        assert len(mod.functions) == 0
+        assert len(mod.classes) == 1
+        assert mod.classes[0].name == "Foo"
+
+
+class TestPropertyDeleter:
+    def test_deleter_decorator(self):
+        source = """
+class Foo:
+    @property
+    def x(self) -> int: ...
+    @x.setter
+    def x(self, value: int) -> None: ...
+    @x.deleter
+    def x(self) -> None: ...
+"""
+        mod = _extract(source)
+        cls = mod.classes[0]
+        deleter = [m for m in cls.methods if DecoratorKind.DELETER in m.decorators]
+        assert len(deleter) == 1
+        assert deleter[0].name == "x"
+
+
 class TestConditionalBlocks:
     def test_version_check(self):
         source = """

@@ -69,13 +69,23 @@ class StubExtractor(ast.NodeVisitor):
             self._handle_import_from(node)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             func = self._extract_function(node)
+            # Remove variables/classes with same name, but not functions
+            # (functions are handled by _merge_function for overload support)
+            self._module.variables = [
+                v for v in self._module.variables if v.name != func.name
+            ]
+            self._module.classes = [
+                c for c in self._module.classes if c.name != func.name
+            ]
             self._merge_function(self._module.functions, func)
         elif isinstance(node, ast.ClassDef):
             cls = self._extract_class(node)
+            self._remove_name(cls.name)
             self._module.classes.append(cls)
         elif isinstance(node, ast.AnnAssign):
             var = self._extract_annotated_var(node)
             if var:
+                self._remove_name(var.name)
                 self._module.variables.append(var)
         elif isinstance(node, ast.Assign):
             self._handle_assign(node)
@@ -85,6 +95,12 @@ class StubExtractor(ast.NodeVisitor):
             self._handle_if(node)
         elif isinstance(node, ast.Expr):
             self._handle_expr_stmt(node)
+
+    def _remove_name(self, name: str) -> None:
+        """Remove any prior definition of a name (variable, function, or class)."""
+        self._module.variables = [v for v in self._module.variables if v.name != name]
+        self._module.functions = [f for f in self._module.functions if f.name != name]
+        self._module.classes = [c for c in self._module.classes if c.name != name]
 
     # ── Imports ──────────────────────────────────────────────────────
 
@@ -136,6 +152,8 @@ class StubExtractor(ast.NodeVisitor):
         return_type = None
         if node.returns:
             return_type = unparse_annotation(node.returns)
+        elif not self._has_value_return(node):
+            return_type = "None"
 
         return FunctionInfo(
             name=node.name,
@@ -145,6 +163,35 @@ class StubExtractor(ast.NodeVisitor):
             raw_decorators=raw_decorators,
             is_async=isinstance(node, ast.AsyncFunctionDef),
         )
+
+    @staticmethod
+    def _has_value_return(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+        """Check if a function body contains a return statement with a value.
+
+        Only checks the immediate function body, not nested functions/classes.
+        """
+
+        def _check(stmts: list[ast.stmt]) -> bool:
+            for stmt in stmts:
+                if isinstance(
+                    stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                ):
+                    continue
+                if isinstance(stmt, ast.Return) and stmt.value is not None:
+                    if (
+                        isinstance(stmt.value, ast.Constant)
+                        and stmt.value.value is None
+                    ):
+                        continue
+                    return True
+                # Recurse into compound statements (if/for/while/try/with)
+                for field_name in ("body", "orelse", "handlers", "finalbody"):
+                    child_stmts = getattr(stmt, field_name, None)
+                    if isinstance(child_stmts, list) and _check(child_stmts):
+                        return True
+            return False
+
+        return _check(node.body)
 
     def _extract_params(
         self, args: ast.arguments, *, is_method: bool = False
@@ -407,14 +454,28 @@ class StubExtractor(ast.NodeVisitor):
         self, name: str, call: ast.Call, cls: ClassInfo
     ) -> None:
         """Convert `x = property(fget, fset, ...)` into @property methods."""
-        # Add getter
-        getter = FunctionInfo(
-            name=name,
-            params=[ParameterInfo(name="self")],
-            decorators=[DecoratorKind.PROPERTY],
-            raw_decorators=["property"],
-        )
-        cls.methods.append(getter)
+        # Check if fget is None (explicit None or missing)
+        has_getter = True
+        if call.args:
+            fget = call.args[0]
+            if isinstance(fget, ast.Constant) and fget.value is None:
+                has_getter = False
+        else:
+            # Check for fget keyword
+            for kw in call.keywords:
+                if kw.arg == "fget":
+                    if isinstance(kw.value, ast.Constant) and kw.value.value is None:
+                        has_getter = False
+                    break
+
+        if has_getter:
+            getter = FunctionInfo(
+                name=name,
+                params=[ParameterInfo(name="self")],
+                decorators=[DecoratorKind.PROPERTY],
+                raw_decorators=["property"],
+            )
+            cls.methods.append(getter)
 
         # If there's a second argument (fset), add setter
         has_setter = len(call.args) >= 2 and not (
@@ -445,7 +506,10 @@ class StubExtractor(ast.NodeVisitor):
     def _handle_slots(self, value: ast.expr, class_name: str) -> None:
         """Parse __slots__ to pre-register attribute names."""
         names: list[str] = []
-        if isinstance(value, (ast.List, ast.Tuple, ast.Set)):
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            # Single string form: __slots__ = "x"
+            names.append(value.value)
+        elif isinstance(value, (ast.List, ast.Tuple, ast.Set)):
             for elt in value.elts:
                 if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
                     names.append(elt.value)
@@ -492,6 +556,7 @@ class StubExtractor(ast.NodeVisitor):
                     if is_type_alias:
                         # Preserve the RHS as annotation
                         annotation = ast.unparse(node.value)
+                    self._remove_name(target.id)
                     self._module.variables.append(
                         VariableInfo(
                             name=target.id,
