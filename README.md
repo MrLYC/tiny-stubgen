@@ -1,5 +1,6 @@
 # tiny-stubgen
 
+[![PyPI version](https://img.shields.io/pypi/v/tiny-stubgen)](https://pypi.org/project/tiny-stubgen/)
 [![CI](https://github.com/MrLYC/tiny-stubgen/actions/workflows/ci.yml/badge.svg)](https://github.com/MrLYC/tiny-stubgen/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -92,17 +93,15 @@ else:
 
 ## 安装
 
+```bash
+pip install tiny-stubgen
+```
+
 ### 从源码安装
 
 ```bash
 git clone https://github.com/MrLYC/tiny-stubgen.git
 cd tiny-stubgen
-pip install -e .
-```
-
-### 安装开发依赖
-
-```bash
 pip install -e ".[dev]"
 ```
 
