@@ -37,6 +37,8 @@ testpaths = ["tests"]
 
 [tool.ruff]
 target-version = "py311"
+extend-exclude = ["examples/*.pyi"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/fixtures/**" = ["F401"]
+"examples/**" = ["F401"]

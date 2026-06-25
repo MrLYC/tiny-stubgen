@@ -1,0 +1,49 @@
+from abc import ABC, abstractmethod
+
+from typing import overload
+
+
+@overload
+def parse(data: str) -> dict[str, object]: ...
+@overload
+def parse(data: bytes) -> list[object]: ...
+def parse(data: str | bytes) -> dict[str, object] | list[object]: ...
+
+class Shape(ABC):
+
+    @abstractmethod
+    def area(self) -> float: ...
+
+    @abstractmethod
+    def perimeter(self) -> float: ...
+
+class Circle(Shape):
+
+    def __init__(self, radius: float) -> None: ...
+
+    @property
+    def radius(self) -> float: ...
+
+    @radius.setter
+    def radius(self, value: float) -> None: ...
+
+    def area(self) -> float: ...
+
+    def perimeter(self) -> float: ...
+
+class MathUtils:
+    precision: int
+
+    @staticmethod
+    def is_even(n: int) -> bool: ...
+
+    @classmethod
+    def set_precision(cls, value: int) -> None: ...
+
+class Converter:
+
+    @overload
+    def convert(self, value: str) -> int: ...
+    @overload
+    def convert(self, value: int) -> str: ...
+    def convert(self, value: str | int) -> int | str: ...

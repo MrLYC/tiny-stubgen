@@ -20,9 +20,11 @@ Python stub (.pyi) 文件生成器，带有增强类型推断。
 
 ```bash
 pip install -e ".[dev]"   # 安装开发依赖
-pytest                    # 运行测试
-ruff check src/ tests/    # Lint 检查
-ruff format src/ tests/   # 格式化
+make test                 # 运行测试
+make lint                 # Lint 检查
+make format               # 格式化
+make examples             # 重新生成示例 stub
+make check-examples       # 检查示例是否同步
 ```
 
 ## 代码约定
@@ -30,4 +32,6 @@ ruff format src/ tests/   # 格式化
 - Python >= 3.11，使用 `from __future__ import annotations`
 - src-layout 布局
 - 测试文件在 `tests/`，fixtures 在 `tests/fixtures/`
-- fixtures 中的 unused imports 是故意的，ruff 已排除 F401
+- fixtures 和 examples 中的 unused imports 是故意的，ruff 已排除 F401
+- examples/*.pyi 是生成文件，排除在 ruff 格式化之外
+- 修改生成逻辑后运行 `make examples` 更新示例 stub

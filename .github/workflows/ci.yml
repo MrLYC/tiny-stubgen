@@ -17,9 +17,9 @@ jobs:
       - name: Install ruff
         run: pip install ruff
       - name: Ruff check
-        run: ruff check src/ tests/
+        run: ruff check src/ tests/ examples/
       - name: Ruff format check
-        run: ruff format --check src/ tests/
+        run: ruff format --check src/ tests/ examples/
 
   test:
     runs-on: ubuntu-latest
@@ -35,3 +35,17 @@ jobs:
         run: pip install -e ".[dev]"
       - name: Run tests
         run: pytest
+
+  check-examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install tiny-stubgen
+        run: pip install -e .
+      - name: Regenerate example stubs
+        run: tiny-stubgen examples/ -o examples/ --overwrite
+      - name: Check stubs are up to date
+        run: git diff --exit-code -- 'examples/*.pyi'

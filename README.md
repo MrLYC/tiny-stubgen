@@ -101,6 +101,26 @@ def greet(name: Any, greeting: str = ...) -> str: ...
 | `-q, --quiet` | 静默模式，仅显示错误 |
 | `--version` | 显示版本号 |
 
+## 转换效果展示
+
+[`examples/`](examples/) 目录包含 7 个精心设计的示例，每个 `.py` 文件都有对应的 `.pyi` 文件，直观展示转换效果：
+
+| 示例 | 演示内容 |
+|------|----------|
+| [`01_basic_types`](examples/01_basic_types.py) | 字面量、集合、元组、字典的类型推断 |
+| [`02_functions`](examples/02_functions.py) | 函数签名、默认值、async、位置/关键字参数 |
+| [`03_classes`](examples/03_classes.py) | 继承、实例属性提取、嵌套类、`__slots__` |
+| [`04_decorators`](examples/04_decorators.py) | property、abstractmethod、overload 等装饰器 |
+| [`05_dataclasses`](examples/05_dataclasses.py) | dataclass、NamedTuple、TypedDict |
+| [`06_imports_and_exports`](examples/06_imports_and_exports.py) | 导入处理、`__all__` 导出控制、TYPE_CHECKING |
+| [`07_conditionals`](examples/07_conditionals.py) | sys.platform / sys.version_info 条件块 |
+
+可随时重新生成所有示例的 stub 文件：
+
+```bash
+make examples
+```
+
 ## 项目结构
 
 ```
@@ -113,13 +133,26 @@ tiny-stubgen/
 │   ├── resolver.py     # 导入去重与导出过滤
 │   ├── models.py       # 核心数据模型
 │   └── utils.py        # 工具函数
+├── examples/           # 转换效果展示（.py + .pyi）
 ├── tests/              # 测试套件
 ├── docs/               # 架构文档
+├── Makefile            # 常用开发命令
 ├── pyproject.toml
 └── .github/workflows/  # CI 配置
 ```
 
 ## 开发
+
+常用命令（通过 Makefile）：
+
+```bash
+make help            # 查看所有可用命令
+make lint            # 运行 lint 检查
+make format          # 格式化代码
+make test            # 运行测试
+make examples        # 重新生成示例 stub
+make check-examples  # 检查示例是否同步
+```
 
 参见 [贡献指南](CONTRIBUTING.md) 了解如何参与开发。
 
