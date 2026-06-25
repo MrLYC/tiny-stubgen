@@ -2,7 +2,22 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/)。
 
-## [0.1.0] - 2025-06-25
+## [0.1.1] - 2026-06-26
+
+### Improved
+
+- PyPI 页面展示完整 README 描述和项目链接
+- 添加 `py.typed` marker（PEP 561）
+- 添加 PyPI version badge
+- `pip install tiny-stubgen` 作为首选安装方式
+- 发布流程增加 tag 与版本号一致性校验
+
+### Added
+
+- CHANGELOG.md、CODE_OF_CONDUCT.md、SECURITY.md
+- GitHub Issue / PR 模板
+
+## [0.1.0] - 2026-06-25
 
 ### Added
 
@@ -22,4 +37,5 @@
 - GitHub Actions CI（lint + test + examples 同步检查）
 - PyPI 自动发布（tag 触发）
 
+[0.1.1]: https://github.com/MrLYC/tiny-stubgen/releases/tag/v0.1.1
 [0.1.0]: https://github.com/MrLYC/tiny-stubgen/releases/tag/v0.1.0
