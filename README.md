@@ -123,6 +123,14 @@ def greet(name: Any, greeting: str = ...) -> str: ...
 make examples
 ```
 
+## 架构概览
+
+tiny-stubgen 的主流程是 `cli.process_file()` 串起 `StubExtractor`、`postprocess()` 和 `StubEmitter`：先解析 Python 源码为 `ModuleStub`，再做导入去重与导出过滤，最后渲染为 `.pyi` 文本。
+
+![tiny-stubgen architecture](docs/architecture-imagegen.png)
+
+更详细的模块职责见 [架构设计](docs/architecture.md)。
+
 ## 项目结构
 
 ```
