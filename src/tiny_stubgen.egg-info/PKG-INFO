@@ -1,0 +1,18 @@
+Metadata-Version: 2.4
+Name: tiny-stubgen
+Version: 0.1.0
+Summary: A Python stub (.pyi) file generator with enhanced type inference
+Author-email: MrLYC <imyikong@gmail.com>
+License-Expression: MIT
+Keywords: stub,pyi,type-hints,typing,stubgen
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Classifier: Topic :: Software Development :: Code Generators
+Classifier: Typing :: Typed
+Requires-Python: >=3.11
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
