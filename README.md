@@ -5,6 +5,53 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
+A Python stub (.pyi) file generator with enhanced type inference. Zero dependencies.
+
+## Quick Start
+
+```bash
+pip install tiny-stubgen
+
+# Generate stubs for a single file
+tiny-stubgen example.py
+
+# Generate stubs for a directory
+tiny-stubgen src/ -o stubs/ --overwrite
+```
+
+### Python API
+
+```python
+from tiny_stubgen import generate_stub
+
+source = open("example.py").read()
+stub = generate_stub(source)
+print(stub)
+```
+
+## Why tiny-stubgen?
+
+Unlike `mypy stubgen`, which outputs `Incomplete` for unannotated code, tiny-stubgen uses **smart type inference** to produce more precise stubs from default values, assignments, and constructor parameters:
+
+| Feature | tiny-stubgen | mypy stubgen |
+|---------|:---:|:---:|
+| Literal / collection type inference | Yes | No (`Incomplete`) |
+| `__init__` instance attribute inference | Yes | No (`Incomplete`) |
+| Conditional block preservation (`sys.platform`, etc.) | Yes | No (flattened) |
+| Overload implementation signature | Yes | No |
+| TypeVar / ParamSpec preservation | Yes | Yes |
+| Enum member handling | Yes | Yes |
+| Re-export `as` aliases | Yes | Yes |
+| Runtime reflection (C extensions) | No | Yes |
+| Cross-module type resolution | No | Yes |
+| Zero dependencies | Yes | No (requires mypy) |
+
+**In short**: tiny-stubgen is ideal for pure-Python projects needing fast, high-quality stub generation with superior type inference. mypy stubgen is better when runtime reflection (C extensions) or cross-module resolution is needed. The two are complementary.
+
+See the [`examples/`](examples/) directory for 9 detailed before/after comparisons.
+
+---
+
 一个带有增强类型推断能力的 Python stub (.pyi) 文件生成器。
 
 ## 为什么需要 tiny-stubgen

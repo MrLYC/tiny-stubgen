@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from typing import Iterator
 
 from .inferrer import classify_decorator, infer_type_from_default, infer_type_from_value
 from .models import (
@@ -44,7 +45,15 @@ class StubExtractor(ast.NodeVisitor):
 
     def extract(self) -> ModuleStub:
         """Parse source and extract stub information."""
-        tree = ast.parse(self.source)
+        try:
+            tree = ast.parse(self.source)
+        except SyntaxError as e:
+            msg = (
+                f"invalid syntax in module {self.module_name!r}"
+                if self.module_name
+                else str(e)
+            )
+            raise SyntaxError(msg) from e
 
         # Extract module docstring
         if (
@@ -361,7 +370,7 @@ class StubExtractor(ast.NodeVisitor):
             if arg.annotation:
                 param_types[arg.arg] = unparse_annotation(arg.annotation)
 
-        for stmt in ast.walk(init_node):
+        for stmt in self._iter_body_stmts(init_node.body):
             # self.x: type = value
             if isinstance(stmt, ast.AnnAssign):
                 if (
@@ -398,6 +407,19 @@ class StubExtractor(ast.NodeVisitor):
                             self._seen_attrs.setdefault(class_name, set()).add(
                                 attr_name
                             )
+
+    @staticmethod
+    def _iter_body_stmts(stmts: list[ast.stmt]) -> Iterator[ast.stmt]:
+        """Yield statements from a body, recursing into compound statements
+        but skipping nested function/class/lambda scopes."""
+        for stmt in stmts:
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            yield stmt
+            for field_name in ("body", "orelse", "handlers", "finalbody"):
+                child_stmts = getattr(stmt, field_name, None)
+                if isinstance(child_stmts, list):
+                    yield from StubExtractor._iter_body_stmts(child_stmts)
 
     def _extract_class_annotated_attr(
         self, node: ast.AnnAssign, class_name: str

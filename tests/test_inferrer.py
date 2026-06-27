@@ -160,3 +160,82 @@ class TestClassifyDecorator:
     def test_dataclass_call(self):
         kind, _ = classify_decorator(_parse_expr("dataclass(frozen=True)"))
         assert kind == DecoratorKind.DATACLASS
+
+    def test_attribute_decorator_call(self):
+        kind, _ = classify_decorator(_parse_expr("dataclasses.dataclass(frozen=True)"))
+        assert kind == DecoratorKind.DATACLASS
+
+    def test_attribute_decorator_other(self):
+        kind, raw = classify_decorator(_parse_expr("app.route('/home')"))
+        assert kind == DecoratorKind.OTHER
+        assert "app.route" in raw
+
+    def test_overload_call(self):
+        kind, _ = classify_decorator(_parse_expr("overload()"))
+        assert kind == DecoratorKind.OVERLOAD
+
+
+class TestInferTypeFromDefaultEdgeCases:
+    def test_negative_int(self):
+        assert infer_type_from_default(_parse_expr("-1")) == "int"
+
+    def test_negative_float(self):
+        assert infer_type_from_default(_parse_expr("-3.14")) == "float"
+
+    def test_positive_unary(self):
+        assert infer_type_from_default(_parse_expr("+5")) == "int"
+
+    def test_empty_dict(self):
+        assert infer_type_from_default(_parse_expr("{}")) == "dict[str, Any]"
+
+    def test_empty_set(self):
+        # set() is a Call, not a Set literal — use _parse_expr with set literal
+        assert infer_type_from_default(_parse_expr("{1, 2}.copy()")) is None
+
+    def test_empty_tuple(self):
+        assert infer_type_from_default(_parse_expr("()")) == "tuple[()]"
+
+    def test_empty_list(self):
+        assert infer_type_from_default(_parse_expr("[]")) == "list[Any]"
+
+    def test_non_literal_returns_none(self):
+        assert infer_type_from_default(_parse_expr("foo()")) is None
+
+
+class TestInferConstantEdgeCases:
+    def test_complex(self):
+        assert infer_type_from_value(_parse_expr("3j")) == "complex"
+
+    def test_ellipsis(self):
+        assert infer_type_from_value(_parse_expr("...")) is None
+
+    def test_complex_binop(self):
+        assert infer_type_from_value(_parse_expr("1+2j")) == "complex"
+
+
+class TestInferCollectionEdgeCases:
+    def test_list_with_uninferrable_element(self):
+        result = infer_type_from_value(_parse_expr("[foo]"))
+        assert result == "list[Any]"
+
+    def test_set_with_mixed_types(self):
+        result = infer_type_from_value(_parse_expr("{1, 'a'}"))
+        assert "int" in result
+        assert "str" in result
+
+
+class TestInferDictEdgeCases:
+    def test_dict_with_unpacking(self):
+        result = infer_type_from_value(_parse_expr("{**other}"))
+        assert result == "dict[Any, Any]"
+
+    def test_dict_with_uninferrable(self):
+        result = infer_type_from_value(_parse_expr("{foo: 1}"))
+        assert result == "dict[Any, Any]"
+
+
+class TestInferCallEdgeCases:
+    def test_call_non_name_non_attr(self):
+        # e.g. (get_class())() — func is a Call, not Name or Attribute
+        result = infer_type_from_value(_parse_expr("(lambda: None)()"))
+        assert result is None

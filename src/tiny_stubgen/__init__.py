@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "1.0.0"
 
 from .emitter import StubEmitter
 from .extractor import StubExtractor
 from .resolver import postprocess
 
+# Public stable API: generate_stub, __version__
+# Advanced/unstable: StubExtractor, StubEmitter, postprocess
 __all__ = [
     "__version__",
     "generate_stub",
@@ -23,15 +25,18 @@ def generate_stub(
     module_name: str = "",
     include_private: bool = False,
 ) -> str:
-    """将 Python 源码转为 .pyi stub 内容（纯内存，不落盘）。
+    """Convert Python source code to .pyi stub content (in-memory, no file I/O).
 
     Args:
-        source: Python 源码字符串
-        module_name: 模块名称（影响某些推断行为）
-        include_private: 是否包含以 _ 开头的私有名称
+        source: Python source code string.
+        module_name: Module name (affects some inference behavior).
+        include_private: Whether to include private names (starting with ``_``).
 
     Returns:
-        生成的 .pyi stub 文件内容
+        Generated .pyi stub file content.
+
+    Raises:
+        SyntaxError: If the source code contains invalid Python syntax.
 
     Example::
 

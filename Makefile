@@ -11,7 +11,7 @@ format: ## 格式化代码
 	ruff format src/ tests/ examples/
 
 test: ## 运行测试
-	pytest
+	pytest --cov=tiny_stubgen --cov-report=term-missing
 
 examples: ## 重新生成 examples 目录下的 .pyi 文件
 	tiny-stubgen examples/ -o examples/ --overwrite

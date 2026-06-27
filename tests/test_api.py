@@ -1,5 +1,7 @@
 """Tests for the public Python API."""
 
+import pytest
+
 from tiny_stubgen import (
     StubEmitter,
     StubExtractor,
@@ -46,6 +48,10 @@ class Foo:
     def test_empty_source(self):
         stub = generate_stub("")
         assert isinstance(stub, str)
+
+    def test_syntax_error(self):
+        with pytest.raises(SyntaxError):
+            generate_stub("def (broken")
 
 
 class TestPublicImports:

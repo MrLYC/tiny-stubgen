@@ -15,13 +15,7 @@ from .models import (
     ParameterKind,
     VariableInfo,
 )
-
-
-def _is_private(name: str) -> bool:
-    """Check if a name is private (starts with _ but not dunder)."""
-    return name.startswith("_") and not (
-        name.startswith("__") and name.endswith("__") and len(name) > 4
-    )
+from .utils import is_private
 
 
 # typing names that appear in inferred annotations (e.g. Any from "list[Any]")
@@ -355,7 +349,7 @@ class StubEmitter:
         for attr in cls.attributes:
             if (
                 not self.include_private
-                and _is_private(attr.name)
+                and is_private(attr.name)
                 and not attr.is_class_var
                 and not attr.is_final
             ):
@@ -365,14 +359,14 @@ class StubEmitter:
 
         # Emit inner classes
         for inner in cls.inner_classes:
-            if not self.include_private and _is_private(inner.name):
+            if not self.include_private and is_private(inner.name):
                 continue
             self._emit_class(inner)
             has_body = True
 
         # Emit methods (filter private unless requested)
         for method in cls.methods:
-            if not self.include_private and _is_private(method.name):
+            if not self.include_private and is_private(method.name):
                 continue
             self._emit_function(method)
             has_body = True
@@ -469,16 +463,31 @@ class StubEmitter:
 
         for func in self.module.functions:
             self._gather_func_annotations(func, annotations)
+            for overload in func.overloads:
+                self._gather_func_annotations(overload, annotations)
 
         for cls in self.module.classes:
-            for attr in cls.attributes:
-                annotations.append(attr.annotation)
-            for method in cls.methods:
-                self._gather_func_annotations(method, annotations)
-                for overload in method.overloads:
-                    self._gather_func_annotations(overload, annotations)
+            self._gather_class_annotations(cls, annotations)
+
+        for block in self.module.conditional_blocks:
+            for var in block.body_variables + block.else_variables:
+                annotations.append(var.annotation)
+            for func in block.body_functions + block.else_functions:
+                self._gather_func_annotations(func, annotations)
+            for cls in block.body_classes + block.else_classes:
+                self._gather_class_annotations(cls, annotations)
 
         return annotations
+
+    def _gather_class_annotations(self, cls: ClassInfo, out: list[str | None]) -> None:
+        for attr in cls.attributes:
+            out.append(attr.annotation)
+        for method in cls.methods:
+            self._gather_func_annotations(method, out)
+            for overload in method.overloads:
+                self._gather_func_annotations(overload, out)
+        for inner in cls.inner_classes:
+            self._gather_class_annotations(inner, out)
 
     def _gather_func_annotations(
         self, func: FunctionInfo, out: list[str | None]

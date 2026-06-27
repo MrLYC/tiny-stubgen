@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = ["stub", "pyi", "type-hints", "typing", "stubgen"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
@@ -26,8 +26,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/MrLYC/tiny-stubgen"
 Repository = "https://github.com/MrLYC/tiny-stubgen"
+Documentation = "https://github.com/MrLYC/tiny-stubgen/blob/main/docs/architecture.md"
 Issues = "https://github.com/MrLYC/tiny-stubgen/issues"
 Changelog = "https://github.com/MrLYC/tiny-stubgen/blob/main/CHANGELOG.md"
 
@@ -35,7 +35,12 @@ Changelog = "https://github.com/MrLYC/tiny-stubgen/blob/main/CHANGELOG.md"
 tiny-stubgen = "tiny_stubgen.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0"]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "hypothesis>=6.0",
+    "ruff>=0.1",
+]
 
 [tool.setuptools.dynamic]
 version = {attr = "tiny_stubgen.__version__"}
@@ -49,10 +54,21 @@ tiny_stubgen = ["py.typed"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.coverage.run]
+source = ["tiny_stubgen"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 80
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+]
+
 [tool.ruff]
 target-version = "py311"
-extend-exclude = ["examples/*.pyi"]
+extend-exclude = ["examples/*.pyi", "tests/fixtures/*.pyi"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/fixtures/**" = ["F401"]
+"tests/fixtures/**" = ["F401", "F821"]
 "examples/**" = ["F401"]

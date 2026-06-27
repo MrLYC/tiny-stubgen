@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 
 from .models import ImportInfo, ModuleStub
 from .utils import is_public
@@ -11,14 +12,18 @@ from .utils import is_public
 def resolve_exports(module: ModuleStub) -> ModuleStub:
     """Filter module contents based on __all__ if present.
 
+    Returns a new ModuleStub with filtered contents; the input is not modified.
     When __all__ is defined, only names listed in it are kept.
     When __all__ is None, all public names are kept.
     """
     if module.all_names is None:
         # No __all__ — keep all public names
-        module.variables = [v for v in module.variables if is_public(v.name)]
-        module.functions = [f for f in module.functions if is_public(f.name)]
-        module.classes = [c for c in module.classes if is_public(c.name)]
+        return replace(
+            module,
+            variables=[v for v in module.variables if is_public(v.name)],
+            functions=[f for f in module.functions if is_public(f.name)],
+            classes=[c for c in module.classes if is_public(c.name)],
+        )
     else:
         allowed = set(module.all_names)
 
@@ -35,15 +40,19 @@ def resolve_exports(module: ModuleStub) -> ModuleStub:
                 file=sys.stderr,
             )
 
-        module.variables = [v for v in module.variables if v.name in allowed]
-        module.functions = [f for f in module.functions if f.name in allowed]
-        module.classes = [c for c in module.classes if c.name in allowed]
-
-    return module
+        return replace(
+            module,
+            variables=[v for v in module.variables if v.name in allowed],
+            functions=[f for f in module.functions if f.name in allowed],
+            classes=[c for c in module.classes if c.name in allowed],
+        )
 
 
 def deduplicate_imports(module: ModuleStub) -> ModuleStub:
-    """Merge duplicate imports from the same module."""
+    """Merge duplicate imports from the same module.
+
+    Returns a new ModuleStub with deduplicated imports; the input is not modified.
+    """
     merged: dict[tuple[str, int], ImportInfo] = {}
     star_imports: list[ImportInfo] = []
     plain_imports: list[ImportInfo] = []
@@ -62,13 +71,18 @@ def deduplicate_imports(module: ModuleStub) -> ModuleStub:
         if key in merged:
             existing = merged[key]
             existing_names = {n for n, _ in existing.names}
+            new_names = list(existing.names)
             for name, alias in imp.names:
                 if name not in existing_names:
-                    existing.names.append((name, alias))
+                    new_names.append((name, alias))
                     existing_names.add(name)
-            # Preserve type_checking flag
-            if imp.is_type_checking:
-                existing.is_type_checking = True
+            # Build new ImportInfo with merged names
+            merged[key] = ImportInfo(
+                module=existing.module,
+                names=new_names,
+                is_type_checking=existing.is_type_checking or imp.is_type_checking,
+                level=existing.level,
+            )
         else:
             merged[key] = ImportInfo(
                 module=imp.module,
@@ -77,13 +91,18 @@ def deduplicate_imports(module: ModuleStub) -> ModuleStub:
                 level=imp.level,
             )
 
-    module.imports = plain_imports + star_imports + list(merged.values())
-    return module
+    return replace(
+        module,
+        imports=plain_imports + star_imports + list(merged.values()),
+    )
 
 
 def postprocess(module: ModuleStub, *, include_private: bool = False) -> ModuleStub:
-    """Run all post-processing steps on a module."""
-    module = deduplicate_imports(module)
+    """Run all post-processing steps on a module.
+
+    Returns a new ModuleStub; the input is not modified.
+    """
+    result = deduplicate_imports(module)
     if not include_private:
-        module = resolve_exports(module)
-    return module
+        result = resolve_exports(result)
+    return result

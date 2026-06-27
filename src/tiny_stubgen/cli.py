@@ -39,13 +39,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Include private names (starting with _) in stubs",
     )
-    parser.add_argument(
+    verbosity = parser.add_mutually_exclusive_group()
+    verbosity.add_argument(
         "-v",
         "--verbose",
         action="store_true",
         help="Verbose output",
     )
-    parser.add_argument(
+    verbosity.add_argument(
         "-q",
         "--quiet",
         action="store_true",
@@ -67,21 +68,23 @@ def process_file(
     overwrite: bool = False,
     verbose: bool = False,
     quiet: bool = False,
-) -> bool:
+) -> str:
     """Process a single .py file into a .pyi stub.
 
-    Returns True on success, False on failure.
+    Returns:
+        "ok" on success, "skipped" if output exists and overwrite is False,
+        "error" on failure.
     """
     if output_path.exists() and not overwrite:
         if not quiet:
             print(f"  skip (exists): {output_path}", file=sys.stderr)
-        return False
+        return "skipped"
 
     try:
         source = input_path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as e:
         print(f"  error reading {input_path}: {e}", file=sys.stderr)
-        return False
+        return "error"
 
     try:
         stub_content = generate_stub(
@@ -91,10 +94,10 @@ def process_file(
         )
     except SyntaxError as e:
         print(f"  syntax error in {input_path}: {e}", file=sys.stderr)
-        return False
+        return "error"
     except Exception as e:
         print(f"  error processing {input_path}: {e}", file=sys.stderr)
-        return False
+        return "error"
 
     # Write output
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -103,7 +106,7 @@ def process_file(
     if verbose:
         print(f"  generated: {output_path}")
 
-    return True
+    return "ok"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -116,6 +119,7 @@ def main(argv: list[str] | None = None) -> int:
 
     total = 0
     success = 0
+    errors = 0
 
     for path in args.paths:
         path = path.resolve()
@@ -128,15 +132,18 @@ def main(argv: list[str] | None = None) -> int:
 
             output = _get_output_path(path, path.parent, args.output_dir)
             total += 1
-            if process_file(
+            result = process_file(
                 path,
                 output,
                 include_private=args.include_private,
                 overwrite=args.overwrite,
                 verbose=verbose,
                 quiet=quiet,
-            ):
+            )
+            if result == "ok":
                 success += 1
+            elif result == "error":
+                errors += 1
 
         elif path.is_dir():
             if not quiet:
@@ -145,22 +152,25 @@ def main(argv: list[str] | None = None) -> int:
             for py_file in walk_python_files(path):
                 output = _get_output_path(py_file, path, args.output_dir)
                 total += 1
-                if process_file(
+                result = process_file(
                     py_file,
                     output,
                     include_private=args.include_private,
                     overwrite=args.overwrite,
                     verbose=verbose,
                     quiet=quiet,
-                ):
+                )
+                if result == "ok":
                     success += 1
+                elif result == "error":
+                    errors += 1
         else:
             print(f"Path not found: {path}", file=sys.stderr)
 
     if not quiet:
         print(f"\nProcessed {success}/{total} files.")
 
-    return 0 if success > 0 or total == 0 else 1
+    return 1 if errors > 0 else 0
 
 
 def _get_output_path(

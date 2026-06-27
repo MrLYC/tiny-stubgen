@@ -34,7 +34,7 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
       - name: Run tests
-        run: pytest
+        run: pytest --cov=tiny_stubgen --cov-report=term-missing
 
   check-examples:
     runs-on: ubuntu-latest

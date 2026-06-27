@@ -561,3 +561,209 @@ else:
         assert "sys.version_info" in block.test
         assert len(block.body_imports) == 1
         assert len(block.else_imports) == 1
+
+
+class TestPropertyCallForm:
+    def test_property_fget_keyword_none(self):
+        source = """
+class Foo:
+    x = property(fget=None)
+"""
+        mod = _extract(source)
+        cls = mod.classes[0]
+        # fget=None means no getter
+        getter_methods = [m for m in cls.methods if "property" in str(m.decorators)]
+        assert len(getter_methods) == 0
+
+    def test_property_fset_keyword(self):
+        source = """
+class Foo:
+    x = property(lambda self: self._x, fset=lambda self, v: setattr(self, '_x', v))
+"""
+        mod = _extract(source)
+        cls = mod.classes[0]
+        setters = [m for m in cls.methods if DecoratorKind.SETTER in m.decorators]
+        assert len(setters) == 1
+        getters = [m for m in cls.methods if DecoratorKind.PROPERTY in m.decorators]
+        assert len(getters) == 1
+
+    def test_property_fset_keyword_only(self):
+        source = """
+def getter(self): return self._x
+def setter(self, v): self._x = v
+class Foo:
+    x = property(fget=getter, fset=setter)
+"""
+        mod = _extract(source)
+        cls = mod.classes[0]
+        setters = [m for m in cls.methods if DecoratorKind.SETTER in m.decorators]
+        assert len(setters) == 1
+
+
+class TestSlotsDict:
+    def test_slots_dict_form(self):
+        source = """
+class Foo:
+    __slots__ = {"x": "doc for x", "y": "doc for y"}
+"""
+        mod = _extract(source)
+        cls = mod.classes[0]
+        attr_names = {a.name for a in cls.attributes}
+        assert "x" in attr_names
+        assert "y" in attr_names
+
+
+class TestInitAttrsNestedScope:
+    def test_nested_function_attrs_not_extracted(self):
+        source = """
+class Foo:
+    def __init__(self) -> None:
+        self.x = 1
+        def inner():
+            self.y = 2
+        nested_lambda = lambda: self.z
+"""
+        mod = _extract(source)
+        cls = mod.classes[0]
+        attr_names = {a.name for a in cls.attributes}
+        assert "x" in attr_names
+        assert "y" not in attr_names
+        assert "z" not in attr_names
+
+
+class TestTypeAliasValue:
+    def test_typing_union_attribute(self):
+        source = "import typing\nMyType = typing.Union[int, str]\n"
+        mod = _extract(source)
+        var = [v for v in mod.variables if v.name == "MyType"][0]
+        assert var.is_type_alias is True
+
+    def test_typing_optional_attribute(self):
+        source = "import typing\nMyType = typing.Optional[int]\n"
+        mod = _extract(source)
+        var = [v for v in mod.variables if v.name == "MyType"][0]
+        assert var.is_type_alias is True
+
+
+class TestAllMutations:
+    def test_all_append(self):
+        source = """
+__all__ = ["foo"]
+__all__.append("bar")
+def foo(): ...
+def bar(): ...
+"""
+        mod = _extract(source)
+        assert mod.all_names == ["foo", "bar"]
+
+    def test_all_extend(self):
+        source = """
+__all__ = ["foo"]
+__all__.extend(["bar", "baz"])
+def foo(): ...
+def bar(): ...
+def baz(): ...
+"""
+        mod = _extract(source)
+        assert mod.all_names == ["foo", "bar", "baz"]
+
+    def test_all_extend_no_prior(self):
+        source = """
+__all__.extend(["foo"])
+def foo(): ...
+"""
+        mod = _extract(source)
+        assert mod.all_names == ["foo"]
+
+    def test_all_append_no_prior(self):
+        source = """
+__all__.append("foo")
+def foo(): ...
+"""
+        mod = _extract(source)
+        assert mod.all_names == ["foo"]
+
+    def test_all_augassign_no_prior(self):
+        source = """
+__all__ += ["foo"]
+def foo(): ...
+"""
+        mod = _extract(source)
+        assert mod.all_names == ["foo"]
+
+
+class TestConditionalBlockContent:
+    def test_conditional_with_function(self):
+        source = """
+import sys
+if sys.platform == "win32":
+    def get_handle() -> int: ...
+else:
+    def get_handle() -> int: ...
+"""
+        mod = _extract(source)
+        block = mod.conditional_blocks[0]
+        assert len(block.body_functions) == 1
+        assert len(block.else_functions) == 1
+
+    def test_conditional_with_class(self):
+        source = """
+import sys
+if sys.platform == "win32":
+    class WinHandler:
+        pass
+else:
+    class UnixHandler:
+        pass
+"""
+        mod = _extract(source)
+        block = mod.conditional_blocks[0]
+        assert len(block.body_classes) == 1
+        assert len(block.else_classes) == 1
+
+    def test_conditional_with_variable(self):
+        source = """
+import sys
+if sys.platform == "win32":
+    SEPARATOR: str = "\\\\"
+else:
+    SEPARATOR: str = "/"
+"""
+        mod = _extract(source)
+        block = mod.conditional_blocks[0]
+        assert len(block.body_variables) == 1
+        assert len(block.else_variables) == 1
+
+    def test_conditional_with_plain_import(self):
+        source = """
+import sys
+if sys.platform == "win32":
+    import winreg
+"""
+        mod = _extract(source)
+        block = mod.conditional_blocks[0]
+        assert len(block.body_imports) == 1
+
+    def test_conditional_with_assign(self):
+        source = """
+import sys
+if sys.platform == "win32":
+    MAX_PATH = 260
+"""
+        mod = _extract(source)
+        block = mod.conditional_blocks[0]
+        assert len(block.body_variables) == 1
+
+
+class TestExtractSyntaxError:
+    def test_syntax_error_with_module_name(self):
+        import pytest
+
+        with pytest.raises(SyntaxError, match="mymod"):
+            StubExtractor("def (broken", module_name="mymod").extract()
+
+    def test_syntax_error_without_module_name(self):
+        import pytest
+
+        with pytest.raises(SyntaxError):
+            StubExtractor("def (broken").extract()

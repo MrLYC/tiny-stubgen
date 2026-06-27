@@ -24,7 +24,7 @@ class TestProcessFile:
         src = tmp_dir / "mod.py"
         out = tmp_dir / "mod.pyi"
         _write(src, "x: int = 1\n")
-        assert process_file(src, out) is True
+        assert process_file(src, out) == "ok"
         assert out.exists()
         assert "x: int" in out.read_text()
 
@@ -33,7 +33,7 @@ class TestProcessFile:
         out = tmp_dir / "mod.pyi"
         _write(src, "x: int = 1\n")
         _write(out, "old")
-        assert process_file(src, out, overwrite=False) is False
+        assert process_file(src, out, overwrite=False) == "skipped"
         assert out.read_text() == "old"
 
     def test_overwrite(self, tmp_dir):
@@ -41,26 +41,26 @@ class TestProcessFile:
         out = tmp_dir / "mod.pyi"
         _write(src, "x: int = 1\n")
         _write(out, "old")
-        assert process_file(src, out, overwrite=True) is True
+        assert process_file(src, out, overwrite=True) == "ok"
         assert "x: int" in out.read_text()
 
     def test_syntax_error(self, tmp_dir):
         src = tmp_dir / "bad.py"
         out = tmp_dir / "bad.pyi"
         _write(src, "def (broken\n")
-        assert process_file(src, out) is False
+        assert process_file(src, out) == "error"
         assert not out.exists()
 
     def test_missing_source(self, tmp_dir):
         src = tmp_dir / "nonexistent.py"
         out = tmp_dir / "nonexistent.pyi"
-        assert process_file(src, out) is False
+        assert process_file(src, out) == "error"
 
     def test_creates_parent_dirs(self, tmp_dir):
         src = tmp_dir / "mod.py"
         out = tmp_dir / "sub" / "dir" / "mod.pyi"
         _write(src, "x: int = 1\n")
-        assert process_file(src, out) is True
+        assert process_file(src, out) == "ok"
         assert out.exists()
 
     def test_include_private(self, tmp_dir):
@@ -114,6 +114,22 @@ class TestMain:
         main([str(src), "--overwrite", "-q"])
         assert capsys.readouterr().out == ""
 
+    def test_all_skipped_returns_zero(self, tmp_dir):
+        """When all files are skipped (not errors), exit code should be 0."""
+        src = tmp_dir / "mod.py"
+        out = tmp_dir / "mod.pyi"
+        _write(src, "x: int = 1\n")
+        _write(out, "old")
+        ret = main([str(src), "-q"])  # no --overwrite → all skipped
+        assert ret == 0
+
+    def test_error_returns_one(self, tmp_dir):
+        """When there are errors, exit code should be 1."""
+        src = tmp_dir / "bad.py"
+        _write(src, "def (broken\n")
+        ret = main([str(src), "--overwrite", "-q"])
+        assert ret == 1
+
     def test_version(self, capsys):
         with pytest.raises(SystemExit) as exc_info:
             main(["--version"])
@@ -129,3 +145,39 @@ class TestBuildParser:
         assert args.include_private is False
         assert args.verbose is False
         assert args.quiet is False
+
+    def test_verbose_quiet_mutual_exclusion(self):
+        parser = build_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["file.py", "-v", "-q"])
+
+
+class TestProcessFileEdgeCases:
+    def test_verbose_output(self, tmp_dir, capsys):
+        src = tmp_dir / "mod.py"
+        out = tmp_dir / "mod.pyi"
+        _write(src, "x: int = 1\n")
+        process_file(src, out, verbose=True)
+        assert "generated" in capsys.readouterr().out
+
+    def test_generic_exception(self, tmp_dir, monkeypatch):
+        """Test the generic Exception handler in process_file."""
+        src = tmp_dir / "mod.py"
+        out = tmp_dir / "mod.pyi"
+        _write(src, "x: int = 1\n")
+
+        import tiny_stubgen.cli
+
+        def broken_generate(*a, **kw):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(tiny_stubgen.cli, "generate_stub", broken_generate)
+        result = process_file(src, out)
+        assert result == "error"
+
+    def test_directory_with_errors(self, tmp_dir):
+        """Directory processing with error files returns exit 1."""
+        _write(tmp_dir / "good.py", "x: int = 1\n")
+        _write(tmp_dir / "bad.py", "def (broken\n")
+        ret = main([str(tmp_dir), "--overwrite", "-q"])
+        assert ret == 1

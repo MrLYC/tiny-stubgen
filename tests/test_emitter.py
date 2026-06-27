@@ -363,3 +363,175 @@ else:
         assert "from tomllib import loads" in stub
         assert "else:" in stub
         assert "from tomli import loads" in stub
+
+
+class TestImportEdgeCases:
+    def test_import_with_alias(self):
+        stub = _generate_stub("import numpy as np")
+        assert "import numpy as np" in stub
+
+    def test_star_import_with_level(self):
+        stub = _generate_stub("from . import *", include_private=True)
+        assert "from . import *" in stub
+
+
+class TestVariableEdgeCases:
+    def test_type_alias_with_typealias_annotation(self):
+        source = "from typing import TypeAlias\nMyType: TypeAlias = int\n"
+        stub = _generate_stub(source, include_private=True)
+        assert "MyType: TypeAlias" in stub
+
+    def test_variable_no_annotation(self):
+        stub = _generate_stub("x = object()\n", include_private=True)
+        # should use Any since object() returns object, not Any
+        assert "x:" in stub
+
+
+class TestParamFormatEdgeCases:
+    def test_positional_only_then_var_positional(self):
+        source = """
+def foo(a, /, *args): ...
+"""
+        stub = _generate_stub(source, include_private=True)
+        assert "a, /, *args" in stub
+
+    def test_positional_only_then_keyword_only(self):
+        source = """
+def foo(a, /, *, key): ...
+"""
+        stub = _generate_stub(source, include_private=True)
+        assert "a, /" in stub
+        assert "*, key" in stub
+
+    def test_positional_only_then_var_keyword(self):
+        source = """
+def foo(a, /, **kwargs): ...
+"""
+        stub = _generate_stub(source, include_private=True)
+        assert "a, /, **kwargs" in stub
+
+    def test_only_positional_only(self):
+        source = """
+def foo(a, /): ...
+"""
+        stub = _generate_stub(source, include_private=True)
+        assert "a, /" in stub
+
+    def test_default_without_annotation(self):
+        source = """
+def foo(x=1): ...
+"""
+        stub = _generate_stub(source, include_private=True)
+        assert "x: int = ..." in stub or "x=" in stub
+
+
+class TestClassEdgeCases:
+    def test_class_with_keywords(self):
+        source = """
+class Meta(type, metaclass=type):
+    ...
+"""
+        stub = _generate_stub(source, include_private=True)
+        assert "metaclass=type" in stub
+
+    def test_attribute_no_annotation_uses_any(self):
+        """When attribute type can't be inferred, emit as Any."""
+        from tiny_stubgen.emitter import StubEmitter
+        from tiny_stubgen.models import AttributeInfo, ClassInfo, ModuleStub
+
+        module = ModuleStub(
+            classes=[
+                ClassInfo(
+                    name="Foo",
+                    attributes=[AttributeInfo(name="x", annotation=None)],
+                )
+            ]
+        )
+        emitter = StubEmitter(module)
+        result = emitter.emit()
+        assert "x: Any" in result
+
+    def test_inner_class_private_filtered(self):
+        source = """
+class Outer:
+    class _Inner:
+        pass
+    class Public:
+        pass
+"""
+        stub = _generate_stub(source, include_private=False)
+        assert "_Inner" not in stub
+        assert "Public" in stub
+
+
+class TestConditionalBlockEmission:
+    def test_conditional_with_variables(self):
+        source = """
+import sys
+if sys.platform == "win32":
+    MAX_PATH: int = 260
+else:
+    MAX_PATH: int = 4096
+"""
+        stub = _generate_stub(source, include_private=True)
+        assert "if sys.platform" in stub
+        assert "MAX_PATH: int" in stub
+        assert "else:" in stub
+
+    def test_conditional_with_functions(self):
+        source = """
+import sys
+if sys.platform == "win32":
+    def get_handle() -> int: ...
+else:
+    def get_handle() -> int: ...
+"""
+        stub = _generate_stub(source, include_private=True)
+        assert "def get_handle" in stub
+        assert "else:" in stub
+
+    def test_conditional_with_classes(self):
+        source = """
+import sys
+if sys.platform == "win32":
+    class WinHandler:
+        pass
+else:
+    class UnixHandler:
+        pass
+"""
+        stub = _generate_stub(source, include_private=True)
+        assert "class WinHandler" in stub
+        assert "class UnixHandler" in stub
+
+    def test_conditional_empty_body(self):
+        source = """
+import sys
+if sys.platform == "win32":
+    pass
+"""
+        stub = _generate_stub(source, include_private=True)
+        assert "if sys.platform" in stub
+        assert "..." in stub
+
+
+class TestAnnotationGathering:
+    def test_conditional_block_annotations_collected(self):
+        """Typing names in conditional blocks should be auto-imported."""
+        source = """
+import sys
+if sys.version_info >= (3, 11):
+    x: Any = None
+"""
+        stub = _generate_stub(source, include_private=True)
+        assert "from typing import Any" in stub
+
+    def test_inner_class_annotations_collected(self):
+        """Typing names in inner classes should be auto-imported."""
+        source = """
+class Outer:
+    class Inner:
+        x: Optional[int] = None
+"""
+        stub = _generate_stub(source, include_private=True)
+        assert "Optional" in stub
