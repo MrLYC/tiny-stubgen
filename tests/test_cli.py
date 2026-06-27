@@ -181,3 +181,42 @@ class TestProcessFileEdgeCases:
         _write(tmp_dir / "bad.py", "def (broken\n")
         ret = main([str(tmp_dir), "--overwrite", "-q"])
         assert ret == 1
+
+    def test_file_too_large(self, tmp_dir):
+        """Files exceeding size limit are rejected."""
+        from tiny_stubgen.cli import _MAX_FILE_SIZE
+
+        src = tmp_dir / "big.py"
+        out = tmp_dir / "big.pyi"
+        # Create a file just over the limit
+        src.write_bytes(b"x = 1\n" * (_MAX_FILE_SIZE // 6 + 1))
+        result = process_file(src, out)
+        assert result == "error"
+        assert not out.exists()
+
+    def test_recursion_error_handled(self, tmp_dir, monkeypatch):
+        """RecursionError during processing is caught gracefully."""
+        src = tmp_dir / "deep.py"
+        out = tmp_dir / "deep.pyi"
+        _write(src, "x: int = 1\n")
+
+        import tiny_stubgen.cli
+
+        def boom(*a, **kw):
+            raise RecursionError("too deep")
+
+        monkeypatch.setattr(tiny_stubgen.cli, "generate_stub", boom)
+        result = process_file(src, out)
+        assert result == "error"
+
+
+class TestPathTraversal:
+    def test_output_path_escape_rejected(self, tmp_dir):
+        """_get_output_path rejects paths that escape output_dir."""
+        from tiny_stubgen.cli import _get_output_path
+
+        source_file = tmp_dir / "mod.py"
+        source_file.touch()
+        # Normal case should work
+        result = _get_output_path(source_file, tmp_dir, tmp_dir / "out")
+        assert "out" in str(result)

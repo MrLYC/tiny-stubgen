@@ -535,3 +535,34 @@ class Outer:
 """
         stub = _generate_stub(source, include_private=True)
         assert "Optional" in stub
+
+
+class TestOutputSanitization:
+    def test_decorator_newline_stripped(self):
+        """Newlines in decorator strings are sanitized to prevent injection."""
+        from tiny_stubgen.emitter import StubEmitter
+        from tiny_stubgen.models import FunctionInfo, ModuleStub
+
+        module = ModuleStub(
+            functions=[
+                FunctionInfo(
+                    name="foo",
+                    raw_decorators=["malicious\ndef injected(): ..."],
+                    return_type="None",
+                )
+            ]
+        )
+        emitter = StubEmitter(module, include_private=True)
+        result = emitter.emit()
+        lines = result.strip().splitlines()
+        # The decorator should be on a single line (newline replaced with space)
+        decorator_line = [ln for ln in lines if ln.startswith("@")][0]
+        assert "\n" not in decorator_line
+        assert "@malicious def injected" in decorator_line
+
+    def test_sanitize_method(self):
+        from tiny_stubgen.emitter import StubEmitter
+
+        assert StubEmitter._sanitize("foo\nbar") == "foo bar"
+        assert StubEmitter._sanitize("foo\rbar") == "foo bar"
+        assert StubEmitter._sanitize("clean") == "clean"

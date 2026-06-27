@@ -252,7 +252,7 @@ class StubEmitter:
     def _emit_single_function(self, func: FunctionInfo) -> None:
         """Emit a single function signature."""
         for raw_dec in func.raw_decorators:
-            self._line(f"@{raw_dec}")
+            self._line(f"@{self._sanitize(raw_dec)}")
 
         async_prefix = "async " if func.is_async else ""
         params_str = self._format_params(func.params)
@@ -329,7 +329,7 @@ class StubEmitter:
         self._blank_line()
 
         for dec in cls.decorators:
-            self._line(f"@{dec}")
+            self._line(f"@{self._sanitize(dec)}")
 
         bases_parts = list(cls.bases)
         for key, val in cls.keywords:
@@ -390,7 +390,7 @@ class StubEmitter:
     def _emit_conditional_block(self, block: ConditionalBlock) -> None:
         """Emit an if/else block (e.g. platform checks)."""
         self._blank_line()
-        self._line(f"if {block.test}:")
+        self._line(f"if {self._sanitize(block.test)}:")
         self._indent += 1
 
         has_body = False
@@ -497,6 +497,15 @@ class StubEmitter:
             out.append(param.annotation)
 
     # ── Helpers ──────────────────────────────────────────────────────
+
+    @staticmethod
+    def _sanitize(text: str) -> str:
+        """Sanitize an AST-unparsed string for safe .pyi emission.
+
+        Strips embedded newlines that could inject extra statements into
+        the generated stub file.
+        """
+        return text.replace("\n", " ").replace("\r", " ")
 
     def _line(self, text: str) -> None:
         indent = "    " * self._indent

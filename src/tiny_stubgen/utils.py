@@ -24,13 +24,31 @@ _SKIP_DIRS = {
 }
 
 
-def walk_python_files(directory: Path) -> Iterator[Path]:
-    """Yield all .py files in directory, skipping common non-source dirs."""
+def walk_python_files(
+    directory: Path, *, _seen: set[tuple[int, int]] | None = None
+) -> Iterator[Path]:
+    """Yield all .py files in directory, skipping common non-source dirs.
+
+    Symlink cycles are detected via inode/device tracking to prevent
+    infinite recursion.
+    """
+    if _seen is None:
+        _seen = set()
+
+    try:
+        stat = directory.stat()
+    except OSError:
+        return
+    key = (stat.st_dev, stat.st_ino)
+    if key in _seen:
+        return
+    _seen.add(key)
+
     for child in sorted(directory.iterdir()):
         if child.is_dir():
             if child.name in _SKIP_DIRS or child.name.startswith("."):
                 continue
-            yield from walk_python_files(child)
+            yield from walk_python_files(child, _seen=_seen)
         elif child.is_file() and child.suffix == ".py":
             yield child
 

@@ -9,6 +9,9 @@ from pathlib import Path
 from . import __version__, generate_stub
 from .utils import walk_python_files
 
+# Maximum source file size to process (10 MB)
+_MAX_FILE_SIZE = 10 * 1024 * 1024
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -81,6 +84,14 @@ def process_file(
         return "skipped"
 
     try:
+        file_size = input_path.stat().st_size
+        if file_size > _MAX_FILE_SIZE:
+            print(
+                f"  skipping {input_path}: file too large ({file_size} bytes, "
+                f"limit {_MAX_FILE_SIZE})",
+                file=sys.stderr,
+            )
+            return "error"
         source = input_path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as e:
         print(f"  error reading {input_path}: {e}", file=sys.stderr)
@@ -94,6 +105,12 @@ def process_file(
         )
     except SyntaxError as e:
         print(f"  syntax error in {input_path}: {e}", file=sys.stderr)
+        return "error"
+    except RecursionError:
+        print(
+            f"  error processing {input_path}: source too deeply nested",
+            file=sys.stderr,
+        )
         return "error"
     except Exception as e:
         print(f"  error processing {input_path}: {e}", file=sys.stderr)
@@ -176,9 +193,16 @@ def main(argv: list[str] | None = None) -> int:
 def _get_output_path(
     source_file: Path, source_root: Path, output_dir: Path | None
 ) -> Path:
-    """Compute the output .pyi path for a source file."""
+    """Compute the output .pyi path for a source file.
+
+    Raises:
+        ValueError: If the computed output path escapes the output directory.
+    """
     if output_dir is not None:
         relative = source_file.relative_to(source_root)
-        return output_dir / relative.with_suffix(".pyi")
+        result = (output_dir / relative.with_suffix(".pyi")).resolve()
+        if not result.is_relative_to(output_dir.resolve()):
+            raise ValueError(f"Output path escapes output directory: {result}")
+        return result
     else:
         return source_file.with_suffix(".pyi")
