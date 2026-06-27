@@ -2,6 +2,45 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/)。
 
+## [1.0.1] - 2026-06-28
+
+### Security
+
+- Pin GitHub Actions to commit SHA, preventing tag-mutation attacks
+- Switch PyPI publishing to OIDC Trusted Publishing (no long-lived token)
+- Add symlink cycle detection in directory walk to prevent infinite recursion DoS
+- Add 10 MB file size limit to prevent OOM on oversized input
+- Catch `RecursionError` for deeply nested AST input
+- Add output path traversal check (`--output-dir` escape prevention)
+- Sanitize `ast.unparse()` output to strip embedded newlines in decorators, bases, and conditional tests
+
+## [1.0.0] - 2026-06-28
+
+### Added
+
+- Fixture snapshot tests (6 fixtures with `.pyi` golden files)
+- Property-based tests with Hypothesis
+- Unit tests for `utils.py` and `models.py` (95%+ total coverage)
+- Coverage tooling (`pytest-cov`, 80% gate in CI)
+- English section in README (bilingual)
+
+### Fixed
+
+- `_is_private` duplication between `emitter.py` and `utils.py`
+- `_extract_init_attrs` incorrectly extracting attributes from nested functions inside `__init__`
+- `_gather_all_annotations` missing conditional blocks, inner classes, and top-level function overloads
+- Skipped files no longer count as errors (correct exit code)
+- `--verbose` and `--quiet` are now mutually exclusive
+
+### Changed
+
+- `postprocess` uses copy-on-write semantics (`dataclasses.replace`), no longer mutates input
+- `generate_stub` docstring translated to English with `Raises: SyntaxError` documented
+- `ast.parse` errors now include module name context
+- Version bumped to 1.0.0 (Production/Stable)
+- Dev dependencies expanded: `pytest-cov`, `hypothesis`, `ruff`
+- Classifier updated to `Development Status :: 5 - Production/Stable`
+
 ## [0.2.0] - 2026-06-26
 
 ### Added
@@ -49,6 +88,8 @@
 - GitHub Actions CI（lint + test + examples 同步检查）
 - PyPI 自动发布（tag 触发）
 
+[1.0.1]: https://github.com/MrLYC/tiny-stubgen/releases/tag/v1.0.1
+[1.0.0]: https://github.com/MrLYC/tiny-stubgen/releases/tag/v1.0.0
 [0.2.0]: https://github.com/MrLYC/tiny-stubgen/releases/tag/v0.2.0
 [0.1.1]: https://github.com/MrLYC/tiny-stubgen/releases/tag/v0.1.1
 [0.1.0]: https://github.com/MrLYC/tiny-stubgen/releases/tag/v0.1.0
