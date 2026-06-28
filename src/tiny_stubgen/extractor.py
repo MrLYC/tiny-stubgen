@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import ast
-from typing import Iterator
+from typing import Iterator, TypeGuard
 
 from .inferrer import classify_decorator, infer_type_from_default, infer_type_from_value
 from .models import (
@@ -259,11 +259,11 @@ class StubExtractor(ast.NodeVisitor):
 
         # kw_defaults align 1:1 with kwonlyargs
         kw_params = [p for p in params if p.kind == ParameterKind.KEYWORD_ONLY]
-        for param, default in zip(kw_params, args.kw_defaults):
-            if default is not None:
+        for param, kw_default in zip(kw_params, args.kw_defaults):
+            if kw_default is not None:
                 param.default = "..."
                 if param.annotation is None:
-                    inferred = infer_type_from_default(default)
+                    inferred = infer_type_from_default(kw_default)
                     if inferred:
                         param.annotation = inferred
 
@@ -321,7 +321,12 @@ class StubExtractor(ast.NodeVisitor):
 
                 # Extract instance attributes from __init__
                 # Skip for dataclasses/NamedTuple (auto-generated __init__)
-                if stmt.name == "__init__" and not is_dataclass and not is_namedtuple:
+                if (
+                    isinstance(stmt, ast.FunctionDef)
+                    and stmt.name == "__init__"
+                    and not is_dataclass
+                    and not is_namedtuple
+                ):
                     self._extract_init_attrs(stmt, cls)
 
                 # Skip auto-generated methods for TypedDict
@@ -398,11 +403,17 @@ class StubExtractor(ast.NodeVisitor):
                         if attr_name not in self._seen_attrs.get(class_name, set()):
                             # Try: 1) infer from value, 2) use param type if
                             # assigning self.x = x where x is a parameter
-                            annotation = infer_type_from_value(stmt.value)
-                            if annotation is None and isinstance(stmt.value, ast.Name):
-                                annotation = param_types.get(stmt.value.id)
+                            attr_annotation: str | None = infer_type_from_value(
+                                stmt.value
+                            )
+                            if attr_annotation is None and isinstance(
+                                stmt.value, ast.Name
+                            ):
+                                attr_annotation = param_types.get(stmt.value.id)
                             cls.attributes.append(
-                                AttributeInfo(name=attr_name, annotation=annotation)
+                                AttributeInfo(
+                                    name=attr_name, annotation=attr_annotation
+                                )
                             )
                             self._seen_attrs.setdefault(class_name, set()).add(
                                 attr_name
@@ -501,7 +512,7 @@ class StubExtractor(ast.NodeVisitor):
                 )
         return attrs
 
-    def _is_property_call(self, node: ast.expr) -> bool:
+    def _is_property_call(self, node: ast.expr) -> TypeGuard[ast.Call]:
         """Check if node is a property(...) call."""
         return (
             isinstance(node, ast.Call)
@@ -838,9 +849,9 @@ class StubExtractor(ast.NodeVisitor):
         elif isinstance(stmt, ast.Assign):
             for target in stmt.targets:
                 if isinstance(target, ast.Name):
-                    annotation = infer_type_from_value(stmt.value)
+                    variable_annotation: str | None = infer_type_from_value(stmt.value)
                     variables.append(
-                        VariableInfo(name=target.id, annotation=annotation)
+                        VariableInfo(name=target.id, annotation=variable_annotation)
                     )
 
     # ── Overload merging ─────────────────────────────────────────────

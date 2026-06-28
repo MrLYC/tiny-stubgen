@@ -13,8 +13,10 @@ cd tiny-stubgen
 pip install -e ".[dev]"
 
 # 验证环境
-pytest
-ruff check src/ tests/
+make verify
+
+# 可选：安装本地 Git hooks
+pre-commit install --hook-type pre-commit --hook-type pre-push
 ```
 
 ## 代码规范
@@ -27,9 +29,20 @@ ruff check src/ tests/
 
 # 格式化
 ruff format src/ tests/
+
+# 完整格式检查
+make format-check
 ```
 
-CI 会自动运行 lint 检查，请确保提交前通过。
+CI 会自动运行 lint、格式、类型、测试、示例同步、文档链接和包构建检查，请确保提交前通过 `make verify`。
+
+## 类型检查
+
+项目使用 strict mypy 检查公共源码：
+
+```bash
+make typecheck
+```
 
 ## 测试
 
@@ -44,6 +57,12 @@ pytest tests/test_extractor.py
 
 # 显示详细输出
 pytest -v
+```
+
+覆盖率阈值由 `pyproject.toml` 维护，当前完整测试命令是：
+
+```bash
+make test
 ```
 
 ### 测试结构
@@ -61,15 +80,28 @@ pytest -v
 
 - 提交信息简洁明了，说明改动的目的
 - 一个 PR 聚焦解决一个问题或添加一个功能
-- 确保所有测试通过，lint 无报错
+- 确保 `make verify` 通过
+- 用户可见行为变化需要同步更新 `README.md` 或 `docs/`
 
 ## PR 流程
 
 1. Fork 仓库并创建分支
 2. 编写代码和测试
-3. 确认 `pytest` 和 `ruff check` 通过
+3. 确认 `make verify` 通过
 4. 提交 PR，描述改动内容和动机
 
 ## 项目架构
 
 详见 [架构文档](docs/architecture.md)。
+
+## 稳定性体系
+
+完整说明见 [稳定性体系](docs/stability.md)。
+
+## 文档体系
+
+文档入口见 [文档中心](docs/README.md)。新增或修改文档后运行：
+
+```bash
+make docs-check
+```

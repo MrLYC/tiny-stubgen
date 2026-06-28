@@ -1,0 +1,63 @@
+minimum_pre_commit_version: "3.7.0"
+default_install_hook_types:
+  - pre-commit
+  - pre-push
+
+repos:
+  - repo: local
+    hooks:
+      - id: lint
+        name: ruff lint
+        entry: make lint
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: format-check
+        name: ruff format check
+        entry: make format-check
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: typecheck
+        name: mypy strict
+        entry: make typecheck
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: docs-check
+        name: markdown local links
+        entry: make docs-check
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: test
+        name: pytest with coverage
+        entry: make test
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+      - id: check-examples
+        name: generated examples are current
+        entry: make check-examples
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+      - id: package-check
+        name: build and package metadata check
+        entry: make package-check
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

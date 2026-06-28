@@ -22,9 +22,12 @@ Python stub (.pyi) 文件生成器，带有增强类型推断。
 pip install -e ".[dev]"   # 安装开发依赖
 make test                 # 运行测试
 make lint                 # Lint 检查
+make typecheck            # strict mypy 类型检查
+make verify               # 完整稳定性检查
 make format               # 格式化
 make examples             # 重新生成示例 stub
 make check-examples       # 检查示例是否同步
+make docs-check           # 检查文档链接
 ```
 
 ## 代码约定

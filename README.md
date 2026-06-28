@@ -152,6 +152,15 @@ cd tiny-stubgen
 pip install -e ".[dev]"
 ```
 
+### 开发稳定性检查
+
+```bash
+make verify
+pre-commit install --hook-type pre-commit --hook-type pre-push
+```
+
+`make verify` 会运行 lint、格式检查、strict mypy、测试覆盖率、示例同步检查、文档链接检查和包构建校验。详见 [`docs/stability.md`](docs/stability.md)。
+
 ## 快速开始
 
 ### 处理单个文件
@@ -260,6 +269,20 @@ print(emitter.emit())
 make examples
 ```
 
+## 文档
+
+完整文档入口见 [`docs/README.md`](docs/README.md)：
+
+| 文档 | 内容 |
+|------|------|
+| [使用指南](docs/usage.md) | 安装、常见生成流程和输出策略 |
+| [CLI 参考](docs/cli.md) | 命令参数、输出路径和退出码 |
+| [Python API](docs/api.md) | `generate_stub` 和高级组件 |
+| [示例索引](docs/examples.md) | 每个示例文件的主题说明 |
+| [限制与排错](docs/limitations.md) | 适用边界和常见问题 |
+| [架构设计](docs/architecture.md) | 内部流水线和数据模型 |
+| [稳定性体系](docs/stability.md) | 本地检查、CI 和发布门禁 |
+
 ## 架构概览
 
 tiny-stubgen 的主流程是 `cli.process_file()` 串起 `StubExtractor`、`postprocess()` 和 `StubEmitter`：先解析 Python 源码为 `ModuleStub`，再做导入去重与导出过滤，最后渲染为 `.pyi` 文本。
@@ -282,7 +305,7 @@ tiny-stubgen/
 │   └── utils.py        # 工具函数
 ├── examples/           # 转换效果展示（.py + .pyi）
 ├── tests/              # 测试套件
-├── docs/               # 架构文档
+├── docs/               # 用户文档和维护者文档
 ├── Makefile            # 常用开发命令
 ├── pyproject.toml
 └── .github/workflows/  # CI 配置
@@ -299,6 +322,8 @@ make format          # 格式化代码
 make test            # 运行测试
 make examples        # 重新生成示例 stub
 make check-examples  # 检查示例是否同步
+make docs-check      # 检查文档链接
+make verify          # 运行完整稳定性检查
 ```
 
 参见 [贡献指南](CONTRIBUTING.md) 了解如何参与开发。
