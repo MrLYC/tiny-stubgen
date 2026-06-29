@@ -92,11 +92,11 @@ make test
 
 ## 项目架构
 
-详见 [架构文档](docs/architecture.md)。
+详见 [架构文档](docs/zh/architecture.md)。
 
 ## 稳定性体系
 
-完整说明见 [稳定性体系](docs/stability.md)。
+完整说明见 [稳定性体系](docs/zh/stability.md)。
 
 ## 文档体系
 
