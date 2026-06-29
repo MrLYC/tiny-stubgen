@@ -1,6 +1,6 @@
 # Release Process
 
-This project publishes through GitHub Actions and PyPI Trusted Publishing. The workflow is [publish.yml](../../.github/workflows/publish.yml).
+This project publishes through GitHub Actions and a PyPI API token stored as the `PYPI_API_TOKEN` repository secret. The workflow is [publish.yml](../../.github/workflows/publish.yml).
 
 ## Before Release
 
@@ -76,4 +76,3 @@ PyPI versions cannot be overwritten. If a bad version was published:
 2. Fix the code or metadata.
 3. Publish a new patch version.
 4. Follow [SECURITY.md](../../SECURITY.md) if there is security impact.
-

@@ -82,11 +82,9 @@ jobs:
   publish:
     needs: [build]
     runs-on: ubuntu-latest
-    environment: pypi
     timeout-minutes: 10
     permissions:
       contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -116,7 +114,10 @@ jobs:
         with:
           name: python-package-distributions
           path: dist/
+      - name: Install publish tooling
+        run: python -m pip install "twine>=5.0"
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
-        with:
-          packages-dir: dist/
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: python -m twine upload dist/*

@@ -7,7 +7,6 @@
 ### Security
 
 - Pin GitHub Actions to commit SHA, preventing tag-mutation attacks
-- Switch PyPI publishing to OIDC Trusted Publishing (no long-lived token)
 - Add symlink cycle detection in directory walk to prevent infinite recursion DoS
 - Add 10 MB file size limit to prevent OOM on oversized input
 - Catch `RecursionError` for deeply nested AST input

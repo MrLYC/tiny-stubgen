@@ -1,6 +1,6 @@
 # 发布流程
 
-本项目通过 GitHub Actions 和 PyPI Trusted Publishing 发布。发布 workflow 见 [publish.yml](../../.github/workflows/publish.yml)。
+本项目通过 GitHub Actions 和仓库 secret `PYPI_API_TOKEN` 中保存的 PyPI API token 发布。发布 workflow 见 [publish.yml](../../.github/workflows/publish.yml)。
 
 ## 发布前检查
 
