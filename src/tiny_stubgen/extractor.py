@@ -18,7 +18,13 @@ from .models import (
     ParameterKind,
     VariableInfo,
 )
-from .utils import unparse_annotation
+from .utils import (
+    is_valid_identifier,
+    safe_unparse_class_keyword_expr,
+    safe_unparse_conditional_test,
+    safe_unparse_type_expr,
+    safe_unparse_typing_assignment,
+)
 
 
 class StubExtractor(ast.NodeVisitor):
@@ -160,7 +166,7 @@ class StubExtractor(ast.NodeVisitor):
 
         return_type = None
         if node.returns:
-            return_type = unparse_annotation(node.returns)
+            return_type = safe_unparse_type_expr(node.returns) or "Any"
         elif not self._has_value_return(node):
             return_type = "None"
 
@@ -234,7 +240,9 @@ class StubExtractor(ast.NodeVisitor):
         return params
 
     def _make_param(self, arg: ast.arg, kind: ParameterKind) -> ParameterInfo:
-        annotation = unparse_annotation(arg.annotation) if arg.annotation else None
+        annotation = (
+            safe_unparse_type_expr(arg.annotation) or "Any" if arg.annotation else None
+        )
         return ParameterInfo(name=arg.arg, annotation=annotation, kind=kind)
 
     def _apply_defaults(self, params: list[ParameterInfo], args: ast.arguments) -> None:
@@ -271,9 +279,25 @@ class StubExtractor(ast.NodeVisitor):
 
     def _extract_class(self, node: ast.ClassDef) -> ClassInfo:
         """Extract class information."""
-        bases = [ast.unparse(b) for b in node.bases]
-        keywords = [(kw.arg or "", ast.unparse(kw.value)) for kw in node.keywords]
-        decorators = [ast.unparse(d) for d in node.decorator_list]
+        bases = [
+            rendered
+            for base in node.bases
+            if (rendered := safe_unparse_type_expr(base, fallback=None)) is not None
+        ]
+        keywords = [
+            (kw.arg, rendered)
+            for kw in node.keywords
+            if kw.arg is not None
+            and is_valid_identifier(kw.arg)
+            and (rendered := safe_unparse_class_keyword_expr(kw.value)) is not None
+        ]
+        decorators = []
+        is_dataclass = False
+        for dec in node.decorator_list:
+            kind, _ = classify_decorator(dec)
+            if kind == DecoratorKind.DATACLASS:
+                decorators.append("dataclass")
+                is_dataclass = True
 
         cls = ClassInfo(
             name=node.name,
@@ -286,12 +310,6 @@ class StubExtractor(ast.NodeVisitor):
         self._seen_attrs[node.name] = set()
 
         # Detect special class types
-        is_dataclass = any(
-            d in ("dataclass", "dataclasses.dataclass")
-            or d.startswith("dataclass(")
-            or d.startswith("dataclasses.dataclass(")
-            for d in decorators
-        )
         is_namedtuple = any(b in ("NamedTuple", "typing.NamedTuple") for b in bases)
         is_typeddict = any(
             b in ("TypedDict", "typing.TypedDict", "typing_extensions.TypedDict")
@@ -373,7 +391,7 @@ class StubExtractor(ast.NodeVisitor):
             init_node.args.posonlyargs + init_node.args.args + init_node.args.kwonlyargs
         ):
             if arg.annotation:
-                param_types[arg.arg] = unparse_annotation(arg.annotation)
+                param_types[arg.arg] = safe_unparse_type_expr(arg.annotation) or "Any"
 
         for stmt in self._iter_body_stmts(init_node.body):
             # self.x: type = value
@@ -385,7 +403,7 @@ class StubExtractor(ast.NodeVisitor):
                 ):
                     attr_name = stmt.target.attr
                     if attr_name not in self._seen_attrs.get(class_name, set()):
-                        annotation = unparse_annotation(stmt.annotation)
+                        annotation = safe_unparse_type_expr(stmt.annotation) or "Any"
                         cls.attributes.append(
                             AttributeInfo(name=attr_name, annotation=annotation)
                         )
@@ -443,7 +461,7 @@ class StubExtractor(ast.NodeVisitor):
         if name in self._seen_attrs.get(class_name, set()):
             return None
 
-        annotation = unparse_annotation(node.annotation)
+        annotation = safe_unparse_type_expr(node.annotation) or "Any"
         self._seen_attrs.setdefault(class_name, set()).add(name)
 
         # Detect ClassVar and Final
@@ -591,7 +609,8 @@ class StubExtractor(ast.NodeVisitor):
         # Register slot names so __init__ extraction knows about them.
         # Don't add attributes here — __init__ will provide types.
         # Only add slots that are NOT assigned in __init__.
-        self._slot_names.setdefault(class_name, set()).update(names)
+        safe_names = [name for name in names if is_valid_identifier(name)]
+        self._slot_names.setdefault(class_name, set()).update(safe_names)
 
     # ── Module-level variables ───────────────────────────────────────
 
@@ -601,7 +620,7 @@ class StubExtractor(ast.NodeVisitor):
             return None
 
         name = node.target.id
-        annotation = unparse_annotation(node.annotation)
+        annotation = safe_unparse_type_expr(node.annotation) or "Any"
 
         is_final = "Final" in annotation
         is_type_alias = "TypeAlias" in annotation
@@ -642,24 +661,36 @@ class StubExtractor(ast.NodeVisitor):
                 elif self._is_typing_assignment(node.value):
                     # TypeVar, ParamSpec, TypeVarTuple — preserve as assignment
                     self._remove_name(target.id)
+                    assign_value = safe_unparse_typing_assignment(node.value)
+                    if assign_value is None:
+                        self._module.variables.append(
+                            VariableInfo(name=target.id, annotation="Any")
+                        )
+                        continue
                     self._module.variables.append(
                         VariableInfo(
                             name=target.id,
-                            assign_value=ast.unparse(node.value),
+                            assign_value=assign_value,
                         )
                     )
                 else:
-                    annotation = infer_type_from_value(node.value)
+                    inferred_annotation = infer_type_from_value(node.value)
                     # Check for type alias pattern: X = Union[...], X = int | str
                     is_type_alias = self._is_type_alias_value(node.value)
                     if is_type_alias:
                         # Preserve the RHS as annotation
-                        annotation = ast.unparse(node.value)
+                        inferred_annotation = safe_unparse_type_expr(
+                            node.value,
+                            fallback=None,
+                        )
+                        if inferred_annotation is None:
+                            is_type_alias = False
+                            inferred_annotation = "Any"
                     self._remove_name(target.id)
                     self._module.variables.append(
                         VariableInfo(
                             name=target.id,
-                            annotation=annotation,
+                            annotation=inferred_annotation,
                             is_type_alias=is_type_alias,
                         )
                     )
@@ -784,7 +815,9 @@ class StubExtractor(ast.NodeVisitor):
 
     def _is_conditional_import(self, node: ast.If) -> bool:
         """Check if this if block contains imports or definitions worth preserving."""
-        test = ast.unparse(node.test)
+        test = safe_unparse_conditional_test(node.test)
+        if test is None:
+            return False
         # sys.version_info, sys.platform, os.name patterns
         if any(
             kw in test
@@ -795,7 +828,10 @@ class StubExtractor(ast.NodeVisitor):
 
     def _extract_conditional_block(self, node: ast.If) -> ConditionalBlock:
         """Extract a conditional block preserving its structure."""
-        block = ConditionalBlock(test=ast.unparse(node.test))
+        test = safe_unparse_conditional_test(node.test)
+        if test is None:
+            raise ValueError("unsafe conditional block")
+        block = ConditionalBlock(test=test)
 
         for stmt in node.body:
             self._collect_into_block(
@@ -847,7 +883,7 @@ class StubExtractor(ast.NodeVisitor):
         elif isinstance(stmt, ast.ClassDef):
             classes.append(self._extract_class(stmt))
         elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
-            annotation = unparse_annotation(stmt.annotation)
+            annotation = safe_unparse_type_expr(stmt.annotation) or "Any"
             variables.append(VariableInfo(name=stmt.target.id, annotation=annotation))
         elif isinstance(stmt, ast.Assign):
             for target in stmt.targets:

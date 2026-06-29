@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 
 from .models import DecoratorKind
+from .utils import is_safe_dotted_name_expr, safe_unparse_type_expr
 
 
 def infer_type_from_value(node: ast.expr) -> str | None:
@@ -56,7 +57,7 @@ def infer_type_from_value(node: ast.expr) -> str | None:
     if isinstance(node, ast.BinOp):
         if isinstance(node.op, ast.BitOr):
             # Type union (X | Y), preserve as-is
-            return ast.unparse(node)
+            return safe_unparse_type_expr(node, fallback=None)
         if isinstance(node.op, (ast.Add, ast.Sub)):
             # Complex literal like 1+2j
             left_is_num = isinstance(node.left, ast.Constant) and isinstance(
@@ -261,6 +262,8 @@ def _infer_call(node: ast.Call) -> str | None:
 
     # Attribute call: module.Class()
     if isinstance(func, ast.Attribute):
-        return ast.unparse(func)
+        if is_safe_dotted_name_expr(func):
+            return ast.unparse(func)
+        return None
 
     return None

@@ -41,8 +41,13 @@ def _target_path(source: Path, raw_target: str) -> Path | None:
 
     target = unquote(target)
     if Path(target).is_absolute():
-        return Path(target)
-    return (source.parent / target).resolve()
+        path = (ROOT / target.lstrip("/")).resolve()
+    else:
+        path = (source.parent / target).resolve()
+
+    if not path.is_relative_to(ROOT):
+        raise ValueError(f"link target escapes repository: {target}")
+    return path
 
 
 def main() -> int:
@@ -52,7 +57,12 @@ def main() -> int:
         text = md_file.read_text(encoding="utf-8")
         for line_no, line in enumerate(text.splitlines(), start=1):
             for match in LINK_RE.finditer(line):
-                path = _target_path(md_file, match.group(1))
+                try:
+                    path = _target_path(md_file, match.group(1))
+                except ValueError as e:
+                    rel_source = md_file.relative_to(ROOT)
+                    errors.append(f"{rel_source}:{line_no}: {e}")
+                    continue
                 if path is not None and not path.exists():
                     rel_source = md_file.relative_to(ROOT)
                     errors.append(f"{rel_source}:{line_no}: missing link target {path}")

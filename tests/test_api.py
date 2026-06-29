@@ -1,5 +1,7 @@
 """Tests for the public Python API."""
 
+from pathlib import Path
+
 import pytest
 
 from tiny_stubgen import (
@@ -52,6 +54,17 @@ class Foo:
     def test_syntax_error(self):
         with pytest.raises(SyntaxError):
             generate_stub("def (broken")
+
+    def test_does_not_execute_target_source(self, tmp_path: Path):
+        marker = tmp_path / "executed"
+        source = f"""
+from pathlib import Path
+Path({str(marker)!r}).write_text("owned")
+x = 1
+"""
+        stub = generate_stub(source)
+        assert "x: int" in stub
+        assert not marker.exists()
 
 
 class TestPublicImports:

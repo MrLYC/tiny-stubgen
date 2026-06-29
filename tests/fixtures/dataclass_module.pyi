@@ -9,7 +9,7 @@ class Point:
     y: float
     z: float
 
-@dataclass(frozen=True)
+@dataclass
 class Color:
     r: int
     g: int

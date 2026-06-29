@@ -56,6 +56,22 @@ class TestProcessFile:
         out = tmp_dir / "nonexistent.pyi"
         assert process_file(src, out) == "error"
 
+    def test_does_not_execute_target_source(self, tmp_dir):
+        marker = tmp_dir / "executed"
+        src = tmp_dir / "mod.py"
+        out = tmp_dir / "mod.pyi"
+        _write(
+            src,
+            f"""
+from pathlib import Path
+Path({str(marker)!r}).write_text("owned")
+x = 1
+""",
+        )
+        assert process_file(src, out) == "ok"
+        assert "x: int" in out.read_text(encoding="utf-8")
+        assert not marker.exists()
+
     def test_creates_parent_dirs(self, tmp_dir):
         src = tmp_dir / "mod.py"
         out = tmp_dir / "sub" / "dir" / "mod.pyi"
@@ -72,6 +88,25 @@ class TestProcessFile:
         out.symlink_to(target)
         assert process_file(src, out, overwrite=True) == "error"
         assert target.read_text() == "old"
+
+    def test_refuses_symlink_source(self, tmp_dir):
+        src = tmp_dir / "target.py"
+        link = tmp_dir / "link.py"
+        out = tmp_dir / "link.pyi"
+        _write(src, "x: int = 1\n")
+        link.symlink_to(src)
+        assert process_file(link, out) == "error"
+        assert not out.exists()
+
+    def test_refuses_symlink_output_parent(self, tmp_dir):
+        src = tmp_dir / "mod.py"
+        outside = tmp_dir / "outside"
+        link_dir = tmp_dir / "linked"
+        outside.mkdir()
+        link_dir.symlink_to(outside, target_is_directory=True)
+        _write(src, "x: int = 1\n")
+        assert process_file(src, link_dir / "mod.pyi") == "error"
+        assert not (outside / "mod.pyi").exists()
 
     def test_include_private(self, tmp_dir):
         src = tmp_dir / "mod.py"
@@ -117,6 +152,43 @@ class TestMain:
     def test_missing_path(self, tmp_dir):
         ret = main([str(tmp_dir / "nope.py")])
         assert ret == 1
+
+    def test_diagnostic_paths_escape_control_characters(self, tmp_dir, capsys):
+        missing = tmp_dir / "bad\nname.py"
+        ret = main([str(missing)])
+        assert ret == 1
+        assert "bad\\nname.py" in capsys.readouterr().err
+
+    def test_symlink_file_rejected(self, tmp_dir):
+        src = tmp_dir / "target.py"
+        link = tmp_dir / "link.py"
+        _write(src, "x: int = 1\n")
+        link.symlink_to(src)
+        ret = main([str(link), "-q"])
+        assert ret == 1
+        assert not (tmp_dir / "link.pyi").exists()
+
+    def test_path_through_symlinked_directory_rejected(self, tmp_dir):
+        outside = tmp_dir / "outside"
+        root = tmp_dir / "root"
+        link = root / "link"
+        outside.mkdir()
+        root.mkdir()
+        _write(outside / "secret.py", "x: int = 1\n")
+        link.symlink_to(outside, target_is_directory=True)
+        ret = main([str(link / "secret.py"), "-q"])
+        assert ret == 1
+        assert not (outside / "secret.pyi").exists()
+
+    def test_symlink_directory_rejected(self, tmp_dir):
+        src_dir = tmp_dir / "src"
+        link = tmp_dir / "src_link"
+        src_dir.mkdir()
+        _write(src_dir / "mod.py", "x: int = 1\n")
+        link.symlink_to(src_dir, target_is_directory=True)
+        ret = main([str(link), "-q"])
+        assert ret == 1
+        assert not (src_dir / "mod.pyi").exists()
 
     def test_quiet_mode(self, tmp_dir, capsys):
         src = tmp_dir / "mod.py"
@@ -230,3 +302,6 @@ class TestPathTraversal:
         # Normal case should work
         result = _get_output_path(source_file, tmp_dir, tmp_dir / "out")
         assert "out" in str(result)
+
+        with pytest.raises(ValueError):
+            _get_output_path(tmp_dir.parent / "escape.py", tmp_dir, tmp_dir / "out")

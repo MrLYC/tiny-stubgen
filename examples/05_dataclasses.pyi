@@ -8,9 +8,9 @@ class Point:
     x: float
     y: float
 
-    def distance_to(self, other: 'Point') -> float: ...
+    def distance_to(self, other: Point) -> float: ...
 
-@dataclass(frozen=True)
+@dataclass
 class Color:
     r: int
     g: int

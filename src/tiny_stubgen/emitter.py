@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import ast
 import re
 
+from .inferrer import classify_decorator
 from .models import (
     AttributeInfo,
     ClassInfo,
     ConditionalBlock,
+    DecoratorKind,
     FunctionInfo,
     ImportInfo,
     ModuleStub,
@@ -15,7 +18,15 @@ from .models import (
     ParameterKind,
     VariableInfo,
 )
-from .utils import is_private
+from .utils import (
+    is_private,
+    is_safe_dotted_name_text,
+    is_valid_identifier,
+    safe_unparse_class_keyword_expr_from_text,
+    safe_unparse_conditional_test_from_text,
+    safe_unparse_type_expr_from_text,
+    safe_unparse_typing_assignment_from_text,
+)
 
 
 # typing names that appear in inferred annotations (e.g. Any from "list[Any]")
@@ -196,13 +207,21 @@ class StubEmitter:
         re_exported = set(self.module.all_names) if self.module.all_names else set()
 
         if imp.is_star:
+            if imp.module and not is_safe_dotted_name_text(imp.module):
+                return
             prefix = "." * imp.level if imp.level else ""
             self._line(f"from {prefix}{imp.module} import *")
         elif imp.is_from_import:
+            if imp.module and not is_safe_dotted_name_text(imp.module):
+                return
             prefix = "." * imp.level
             module = f"{prefix}{imp.module}" if imp.module else prefix
             parts = []
             for name, alias in imp.names:
+                if not is_valid_identifier(name):
+                    continue
+                if alias is not None and not is_valid_identifier(alias):
+                    continue
                 if alias:
                     parts.append(f"{name} as {alias}")
                 elif name in re_exported:
@@ -210,9 +229,15 @@ class StubEmitter:
                     parts.append(f"{name} as {name}")
                 else:
                     parts.append(name)
+            if not parts:
+                return
             self._line(f"from {module} import {', '.join(parts)}")
         else:
             for name, alias in imp.names:
+                if not is_safe_dotted_name_text(name):
+                    continue
+                if alias is not None and not is_valid_identifier(alias):
+                    continue
                 if alias:
                     self._line(f"import {name} as {alias}")
                 else:
@@ -222,16 +247,27 @@ class StubEmitter:
 
     def _emit_variable(self, var: VariableInfo) -> None:
         """Emit a module-level variable declaration."""
+        if not is_valid_identifier(var.name):
+            return
+
+        annotation = self._safe_annotation(var.annotation)
+
         if var.assign_value is not None:
             # Assignment form: TypeVar, ParamSpec, etc.
-            self._line(f"{var.name} = {var.assign_value}")
-        elif var.is_type_alias:
-            if var.annotation and "TypeAlias" not in var.annotation:
-                self._line(f"{var.name}: TypeAlias = {var.annotation}")
+            assign_value = safe_unparse_typing_assignment_from_text(var.assign_value)
+            if assign_value is not None:
+                self._line(f"{var.name} = {assign_value}")
+            elif annotation:
+                self._line(f"{var.name}: {annotation}")
             else:
-                self._line(f"{var.name}: {var.annotation}")
-        elif var.annotation:
-            self._line(f"{var.name}: {var.annotation}")
+                self._line(f"{var.name}: Any")
+        elif var.is_type_alias:
+            if annotation and "TypeAlias" not in annotation:
+                self._line(f"{var.name}: TypeAlias = {annotation}")
+            else:
+                self._line(f"{var.name}: {annotation or 'Any'}")
+        elif annotation:
+            self._line(f"{var.name}: {annotation}")
         else:
             # No annotation could be inferred — use Any
             self._line(f"{var.name}: Any")
@@ -252,12 +288,19 @@ class StubEmitter:
 
     def _emit_single_function(self, func: FunctionInfo) -> None:
         """Emit a single function signature."""
-        for raw_dec in func.raw_decorators:
-            self._line(f"@{self._sanitize(raw_dec)}")
+        if not is_valid_identifier(func.name):
+            return
+
+        for i, kind in enumerate(func.decorators):
+            raw = func.raw_decorators[i] if i < len(func.raw_decorators) else ""
+            safe_dec = self._safe_function_decorator(kind, raw, func.name)
+            if safe_dec is not None:
+                self._line(f"@{safe_dec}")
 
         async_prefix = "async " if func.is_async else ""
         params_str = self._format_params(func.params)
-        ret = f" -> {func.return_type}" if func.return_type else ""
+        return_type = self._safe_annotation(func.return_type)
+        ret = f" -> {return_type}" if return_type else ""
 
         self._line(f"{async_prefix}def {func.name}({params_str}){ret}: ...")
 
@@ -272,17 +315,23 @@ class StubEmitter:
         for param in params:
             if param.kind == ParameterKind.POSITIONAL_ONLY:
                 needs_slash = True
-                parts.append(self._format_single_param(param))
+                formatted = self._format_single_param(param)
+                if formatted is not None:
+                    parts.append(formatted)
             elif param.kind == ParameterKind.POSITIONAL_OR_KEYWORD:
                 if needs_slash:
                     parts.append("/")
                     needs_slash = False
-                parts.append(self._format_single_param(param))
+                formatted = self._format_single_param(param)
+                if formatted is not None:
+                    parts.append(formatted)
             elif param.kind == ParameterKind.VAR_POSITIONAL:
                 if needs_slash:
                     parts.append("/")
                     needs_slash = False
-                parts.append(self._format_single_param(param))
+                formatted = self._format_single_param(param)
+                if formatted is not None:
+                    parts.append(formatted)
             elif param.kind == ParameterKind.KEYWORD_ONLY:
                 if needs_slash:
                     parts.append("/")
@@ -291,20 +340,27 @@ class StubEmitter:
                     if not has_var_pos:
                         parts.append("*")
                     seen_keyword_only = True
-                parts.append(self._format_single_param(param))
+                formatted = self._format_single_param(param)
+                if formatted is not None:
+                    parts.append(formatted)
             elif param.kind == ParameterKind.VAR_KEYWORD:
                 if needs_slash:
                     parts.append("/")
                     needs_slash = False
-                parts.append(self._format_single_param(param))
+                formatted = self._format_single_param(param)
+                if formatted is not None:
+                    parts.append(formatted)
 
         if needs_slash:
             parts.append("/")
 
         return ", ".join(parts)
 
-    def _format_single_param(self, param: ParameterInfo) -> str:
+    def _format_single_param(self, param: ParameterInfo) -> str | None:
         """Format a single parameter."""
+        if not is_valid_identifier(param.name):
+            return None
+
         prefix = ""
         if param.kind == ParameterKind.VAR_POSITIONAL:
             prefix = "*"
@@ -312,10 +368,11 @@ class StubEmitter:
             prefix = "**"
 
         result = f"{prefix}{param.name}"
-        if param.annotation:
-            result += f": {param.annotation}"
+        annotation = self._safe_annotation(param.annotation)
+        if annotation:
+            result += f": {annotation}"
         if param.default:
-            if param.annotation:
+            if annotation:
                 result += f" = {param.default}"
             else:
                 result += f"={param.default}"
@@ -325,17 +382,28 @@ class StubEmitter:
 
     def _emit_class(self, cls: ClassInfo) -> None:
         """Emit a class definition."""
+        if not is_valid_identifier(cls.name):
+            return
+
         self._blank_line()
 
         for dec in cls.decorators:
-            self._line(f"@{self._sanitize(dec)}")
+            safe_dec = self._safe_class_decorator(dec)
+            if safe_dec is not None:
+                self._line(f"@{safe_dec}")
 
-        bases_parts = list(cls.bases)
+        bases_parts = [
+            safe_base
+            for base in cls.bases
+            if (safe_base := safe_unparse_type_expr_from_text(base, fallback=None))
+            is not None
+        ]
         for key, val in cls.keywords:
-            if key:
-                bases_parts.append(f"{key}={val}")
-            else:
-                bases_parts.append(val)
+            if not is_valid_identifier(key):
+                continue
+            safe_val = safe_unparse_class_keyword_expr_from_text(val)
+            if safe_val is not None:
+                bases_parts.append(f"{key}={safe_val}")
 
         bases_str = f"({', '.join(bases_parts)})" if bases_parts else ""
         self._line(f"class {cls.name}{bases_str}:")
@@ -377,10 +445,12 @@ class StubEmitter:
 
     def _emit_attribute(self, attr: AttributeInfo) -> None:
         """Emit a class attribute declaration."""
+        if not is_valid_identifier(attr.name):
+            return
         if attr.is_enum_member:
             self._line(f"{attr.name} = ...")
         elif attr.annotation:
-            self._line(f"{attr.name}: {attr.annotation}")
+            self._line(f"{attr.name}: {self._safe_annotation(attr.annotation)}")
         else:
             self._line(f"{attr.name}: Any")
 
@@ -390,10 +460,14 @@ class StubEmitter:
         self, block: ConditionalBlock, *, as_elif: bool = False
     ) -> None:
         """Emit an if/elif/else block (e.g. platform checks)."""
+        safe_test = safe_unparse_conditional_test_from_text(block.test)
+        if safe_test is None:
+            return
+
         if not as_elif:
             self._blank_line()
         keyword = "elif" if as_elif else "if"
-        self._line(f"{keyword} {self._sanitize(block.test)}:")
+        self._line(f"{keyword} {safe_test}:")
         self._indent += 1
 
         has_body = False
@@ -455,6 +529,9 @@ class StubEmitter:
 
         for ann in all_annotations:
             if ann:
+                ann = safe_unparse_type_expr_from_text(ann, fallback="Any")
+                if ann is None:
+                    continue
                 for name in _TYPING_NAMES:
                     if re.search(rf"\b{re.escape(name)}\b", ann):
                         needed.add(name)
@@ -529,6 +606,49 @@ class StubEmitter:
         the generated stub file.
         """
         return text.replace("\n", " ").replace("\r", " ")
+
+    @staticmethod
+    def _safe_annotation(text: str | None) -> str | None:
+        if text is None:
+            return None
+        return safe_unparse_type_expr_from_text(text, fallback="Any")
+
+    @staticmethod
+    def _safe_function_decorator(
+        kind: DecoratorKind,
+        raw: str,
+        func_name: str,
+    ) -> str | None:
+        if kind == DecoratorKind.PROPERTY:
+            return "property"
+        if kind == DecoratorKind.CLASSMETHOD:
+            return "classmethod"
+        if kind == DecoratorKind.STATICMETHOD:
+            return "staticmethod"
+        if kind == DecoratorKind.OVERLOAD:
+            return "overload"
+        if kind == DecoratorKind.DATACLASS:
+            return "dataclass"
+        if kind == DecoratorKind.ABSTRACTMETHOD:
+            return raw if is_safe_dotted_name_text(raw) else "abstractmethod"
+        if kind in (DecoratorKind.SETTER, DecoratorKind.DELETER):
+            suffix = "setter" if kind == DecoratorKind.SETTER else "deleter"
+            if is_safe_dotted_name_text(raw) and raw.split(".")[-1] == suffix:
+                return raw
+            if is_valid_identifier(func_name):
+                return f"{func_name}.{suffix}"
+        return None
+
+    @staticmethod
+    def _safe_class_decorator(text: str) -> str | None:
+        try:
+            node = ast.parse(text, mode="eval").body
+        except SyntaxError:
+            return None
+        kind, _ = classify_decorator(node)
+        if kind == DecoratorKind.DATACLASS:
+            return "dataclass"
+        return None
 
     def _line(self, text: str) -> None:
         indent = "    " * self._indent

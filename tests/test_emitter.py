@@ -1,5 +1,7 @@
 """Tests for the stub emitter."""
 
+import ast
+
 from tiny_stubgen.emitter import StubEmitter
 from tiny_stubgen.extractor import StubExtractor
 from tiny_stubgen.resolver import postprocess
@@ -570,8 +572,95 @@ class Outer:
 
 
 class TestOutputSanitization:
-    def test_decorator_newline_stripped(self):
-        """Newlines in decorator strings are sanitized to prevent injection."""
+    def test_malicious_annotations_are_downgraded(self):
+        source = """
+def f(
+    x: __import__("os").system("echo ANN"),
+) -> __import__("os").system("echo RET"): ...
+"""
+        result = _generate_stub(source, include_private=True)
+        assert "__import__" not in result
+        assert "x: Any" in result
+        assert "-> Any" in result
+        ast.parse(result)
+
+    def test_malicious_type_alias_is_downgraded(self):
+        result = _generate_stub(
+            'X = int | __import__("os").system("echo ALIAS")\n',
+            include_private=True,
+        )
+        assert "__import__" not in result
+        assert "X: Any" in result
+        ast.parse(result)
+
+    def test_malicious_typevar_assignment_is_downgraded(self):
+        source = """
+from typing import TypeVar
+T = TypeVar("T", bound=__import__("os").system("echo TV"))
+"""
+        result = _generate_stub(source, include_private=True)
+        assert "__import__" not in result
+        assert "T: Any" in result
+        ast.parse(result)
+
+    def test_malicious_decorator_is_dropped(self):
+        source = """
+@__import__("os").system("echo DEC")
+def f() -> None: ...
+"""
+        result = _generate_stub(source, include_private=True)
+        assert "__import__" not in result
+        assert "def f() -> None: ..." in result
+        assert "@__import__" not in result
+        ast.parse(result)
+
+    def test_dataclass_call_decorator_is_normalized(self):
+        source = """
+from dataclasses import dataclass
+
+@dataclass(frozen=__import__("os").system("echo DC"))
+class C:
+    x: int
+"""
+        result = _generate_stub(source, include_private=True)
+        assert "__import__" not in result
+        assert "@dataclass" in result
+        assert "frozen" not in result
+        ast.parse(result)
+
+    def test_malicious_class_base_is_dropped(self):
+        result = _generate_stub(
+            'class C(__import__("os").system("echo BASE")): ...\n',
+            include_private=True,
+        )
+        assert "__import__" not in result
+        assert "class C:" in result
+        ast.parse(result)
+
+    def test_malicious_conditional_is_dropped(self):
+        source = """
+import sys
+if sys.platform == __import__("os").system("echo COND"):
+    x = 1
+"""
+        result = _generate_stub(source, include_private=True)
+        assert "__import__" not in result
+        assert "if sys.platform" not in result
+        assert "x: int" not in result
+        ast.parse(result)
+
+    def test_invalid_slot_names_are_not_emitted(self):
+        source = """
+class Foo:
+    __slots__ = ("safe", "bad\\n    def injected(self) -> None: ...", "class")
+"""
+        result = _generate_stub(source, include_private=True)
+        assert "safe: Any" in result
+        assert "injected" not in result
+        assert "class: Any" not in result
+
+    def test_direct_model_malicious_decorator_is_dropped(self):
+        """Raw decorators from direct emitter API are not emitted."""
         from tiny_stubgen.emitter import StubEmitter
         from tiny_stubgen.models import FunctionInfo, ModuleStub
 
@@ -586,11 +675,9 @@ class TestOutputSanitization:
         )
         emitter = StubEmitter(module, include_private=True)
         result = emitter.emit()
-        lines = result.strip().splitlines()
-        # The decorator should be on a single line (newline replaced with space)
-        decorator_line = [ln for ln in lines if ln.startswith("@")][0]
-        assert "\n" not in decorator_line
-        assert "@malicious def injected" in decorator_line
+        assert "malicious" not in result
+        assert "def injected" not in result
+        assert "def foo() -> None: ..." in result
 
     def test_sanitize_method(self):
         from tiny_stubgen.emitter import StubEmitter

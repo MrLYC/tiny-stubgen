@@ -9,6 +9,7 @@ from tiny_stubgen.utils import (
     is_dunder,
     is_private,
     is_public,
+    is_valid_identifier,
     unparse_annotation,
     walk_python_files,
 )
@@ -68,6 +69,17 @@ class TestIsPublic:
 
     def test_double_private(self):
         assert is_public("__foo") is False
+
+
+class TestIsValidIdentifier:
+    def test_valid(self):
+        assert is_valid_identifier("name") is True
+
+    def test_keyword(self):
+        assert is_valid_identifier("class") is False
+
+    def test_newline(self):
+        assert is_valid_identifier("x\ndef injected(): ...") is False
 
 
 class TestUnparseAnnotation:
@@ -136,6 +148,14 @@ class TestWalkPythonFiles:
         files = list(walk_python_files(root))
         names = [f.name for f in files]
         assert names == ["inside.py"]
+
+    def test_skips_symlinked_root(self, tmp_path: Path):
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "outside.py").touch()
+        link = tmp_path / "link"
+        link.symlink_to(outside, target_is_directory=True)
+        assert list(walk_python_files(link)) == []
 
     def test_symlink_cycle_protection(self, tmp_path: Path):
         """Symlink cycle should not cause infinite recursion."""
