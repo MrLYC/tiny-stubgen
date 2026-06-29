@@ -1,12 +1,25 @@
 """Tests for the CLI module."""
 
+import json
+import runpy
 import tempfile
 from pathlib import Path
 
 import pytest
 
-from tiny_stubgen.cli import build_parser, main, process_file
-from tiny_stubgen.policies import IOPolicy
+from tiny_stubgen.cli import (
+    _diagnostic_path,
+    _display_error,
+    _path_has_symlink_component,
+    _read_source_text,
+    _report,
+    _source_file_size,
+    _write_output_text,
+    build_parser,
+    main,
+    process_file,
+)
+from tiny_stubgen.policies import DiagnosticPolicy, IOPolicy
 
 
 @pytest.fixture
@@ -374,6 +387,134 @@ class TestMain:
             main(["--version"])
         assert exc_info.value.code == 0
 
+    def test_json_summary(self, tmp_dir, capsys):
+        src = tmp_dir / "mod.py"
+        _write(src, "x: int = 1\n")
+
+        ret = main([str(src), "--overwrite", "--log-format", "json"])
+
+        assert ret == 0
+        events = [
+            json.loads(line) for line in capsys.readouterr().err.strip().splitlines()
+        ]
+        assert any(event.get("status") == "summary" for event in events)
+
+    def test_explicit_file_stat_error(self, tmp_dir, monkeypatch):
+        src = tmp_dir / "mod.py"
+        _write(src, "x: int = 1\n")
+
+        import tiny_stubgen.cli
+
+        def boom(*args, **kwargs):
+            raise OSError("stat failed")
+
+        monkeypatch.setattr(tiny_stubgen.cli, "_source_file_size", boom)
+
+        assert main([str(src), "--overwrite", "-q"]) == 1
+
+    def test_explicit_file_total_bytes_limit(self, tmp_dir, monkeypatch):
+        src = tmp_dir / "mod.py"
+        _write(src, "x: int = 1\n")
+
+        import tiny_stubgen.cli
+
+        monkeypatch.setattr(
+            tiny_stubgen.cli.IOPolicy,
+            "default",
+            classmethod(lambda cls: cls(max_total_bytes=0)),
+        )
+
+        assert main([str(src), "--overwrite", "-q"]) == 1
+
+    def test_explicit_file_collision_skip(self, tmp_dir, capsys):
+        left = tmp_dir / "left"
+        right = tmp_dir / "right"
+        out_dir = tmp_dir / "out"
+        left.mkdir()
+        right.mkdir()
+        _write(left / "mod.py", "x: int = 1\n")
+        _write(right / "mod.py", "y: int = 2\n")
+
+        ret = main(
+            [
+                str(left / "mod.py"),
+                str(right / "mod.py"),
+                "-o",
+                str(out_dir),
+                "--overwrite",
+                "--collision-policy",
+                "skip",
+            ]
+        )
+
+        assert ret == 0
+        assert "skip (collision)" in capsys.readouterr().err
+
+    def test_directory_output_scope_error(self, tmp_dir):
+        src_dir = tmp_dir / "src"
+        out_dir = tmp_dir / "out"
+        src_dir.mkdir()
+        _write(src_dir / "mod.py", "x: int = 1\n")
+
+        ret = main(
+            [
+                str(src_dir),
+                "-o",
+                str(out_dir),
+                "--overwrite",
+                "--output-scope",
+                "source-root",
+                "-q",
+            ]
+        )
+
+        assert ret == 1
+        assert not (out_dir / "mod.pyi").exists()
+
+    def test_directory_stat_error(self, tmp_dir, monkeypatch):
+        src_dir = tmp_dir / "src"
+        out_dir = tmp_dir / "out"
+        src_dir.mkdir()
+        _write(src_dir / "mod.py", "x: int = 1\n")
+
+        import tiny_stubgen.cli
+
+        def boom(*args, **kwargs):
+            raise OSError("stat failed")
+
+        monkeypatch.setattr(tiny_stubgen.cli, "_source_file_size", boom)
+
+        assert main([str(src_dir), "-o", str(out_dir), "--overwrite", "-q"]) == 1
+
+    def test_directory_total_bytes_limit(self, tmp_dir, monkeypatch):
+        src_dir = tmp_dir / "src"
+        out_dir = tmp_dir / "out"
+        src_dir.mkdir()
+        _write(src_dir / "mod.py", "x: int = 1\n")
+
+        import tiny_stubgen.cli
+
+        monkeypatch.setattr(
+            tiny_stubgen.cli.IOPolicy,
+            "default",
+            classmethod(lambda cls: cls(max_total_bytes=0)),
+        )
+
+        assert main([str(src_dir), "-o", str(out_dir), "--overwrite", "-q"]) == 1
+
+    def test_directory_walk_error(self, tmp_dir, monkeypatch):
+        src_dir = tmp_dir / "src"
+        src_dir.mkdir()
+
+        import tiny_stubgen.cli
+
+        def boom(*args, **kwargs):
+            raise OSError("walk failed")
+
+        monkeypatch.setattr(tiny_stubgen.cli, "walk_python_files", boom)
+
+        assert main([str(src_dir), "--overwrite", "-q"]) == 1
+
 
 class TestBuildParser:
     def test_defaults(self):
@@ -459,6 +600,174 @@ class TestProcessFileEdgeCases:
         monkeypatch.setattr(tiny_stubgen.cli, "generate_stub", boom)
         result = process_file(src, out)
         assert result == "error"
+
+    def test_file_exists_during_fail_write_is_error(self, tmp_dir, monkeypatch):
+        src = tmp_dir / "mod.py"
+        out = tmp_dir / "mod.pyi"
+        _write(src, "x: int = 1\n")
+
+        import tiny_stubgen.cli
+
+        def race(*args, **kwargs):
+            raise FileExistsError("created concurrently")
+
+        monkeypatch.setattr(tiny_stubgen.cli, "_write_output_text", race)
+
+        result = process_file(
+            src,
+            out,
+            io_policy=IOPolicy.default().replace(existing="fail"),
+        )
+
+        assert result == "error"
+
+    def test_file_exists_during_skip_write_is_skipped(
+        self,
+        tmp_dir,
+        monkeypatch,
+        capsys,
+    ):
+        src = tmp_dir / "mod.py"
+        out = tmp_dir / "mod.pyi"
+        _write(src, "x: int = 1\n")
+
+        import tiny_stubgen.cli
+
+        def race(*args, **kwargs):
+            raise FileExistsError("created concurrently")
+
+        monkeypatch.setattr(tiny_stubgen.cli, "_write_output_text", race)
+
+        result = process_file(src, out)
+
+        assert result == "skipped"
+        assert "skip (exists)" in capsys.readouterr().err
+
+    def test_write_os_error_is_reported(self, tmp_dir, monkeypatch):
+        src = tmp_dir / "mod.py"
+        out = tmp_dir / "mod.pyi"
+        _write(src, "x: int = 1\n")
+
+        import tiny_stubgen.cli
+
+        def disk_full(*args, **kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(tiny_stubgen.cli, "_write_output_text", disk_full)
+
+        assert process_file(src, out) == "error"
+
+
+class TestDiagnostics:
+    def test_diagnostic_path_modes(self, tmp_dir):
+        path = tmp_dir / "bad\nname.py"
+        path.touch()
+
+        assert _diagnostic_path(path, DiagnosticPolicy(diagnostic_paths="none")) is None
+        assert (
+            _diagnostic_path(path, DiagnosticPolicy(diagnostic_paths="basename"))
+            == "bad\\nname.py"
+        )
+        assert str(tmp_dir) in _diagnostic_path(
+            path,
+            DiagnosticPolicy(diagnostic_paths="absolute"),
+        )
+
+    def test_display_error_prefers_os_strerror(self):
+        error = OSError(2, "No such file or directory", "secret/path")
+        assert _display_error(error) == "No such file or directory"
+
+    def test_report_filters_by_log_level(self, capsys):
+        policy = DiagnosticPolicy(log_level="error")
+
+        _report("debug", "hidden", diagnostic_policy=policy)
+        assert capsys.readouterr().err == ""
+
+        _report("error", "shown", diagnostic_policy=policy)
+        assert "shown" in capsys.readouterr().err
+
+    def test_report_json_can_redact_paths(self, tmp_dir, capsys):
+        _report(
+            "error",
+            "failed",
+            diagnostic_policy=DiagnosticPolicy(
+                log_format="json",
+                diagnostic_paths="none",
+            ),
+            path=tmp_dir / "secret.py",
+            status="error",
+            reason="boom",
+        )
+
+        event = json.loads(capsys.readouterr().err)
+        assert event == {
+            "level": "error",
+            "message": "failed",
+            "reason": "boom",
+            "status": "error",
+        }
+
+
+class TestCliHelpers:
+    def test_relative_symlink_component_detection(self, tmp_dir, monkeypatch):
+        target = tmp_dir / "target"
+        link = tmp_dir / "link"
+        target.mkdir()
+        link.symlink_to(target, target_is_directory=True)
+        monkeypatch.chdir(tmp_dir)
+
+        assert _path_has_symlink_component(Path("link/mod.py")) is True
+        assert _path_has_symlink_component(Path("plain.py")) is False
+
+    def test_read_source_text_follow_policy(self, tmp_dir):
+        src = tmp_dir / "mod.py"
+        _write(src, "x: int = 1\n")
+
+        assert (
+            _read_source_text(
+                src,
+                IOPolicy.default().replace(input_symlinks="follow"),
+            )
+            == "x: int = 1\n"
+        )
+        with pytest.raises(Exception):
+            _read_source_text(
+                src,
+                IOPolicy.default().replace(
+                    input_symlinks="follow",
+                    max_file_size=0,
+                ),
+            )
+
+    def test_write_output_text_allows_symlink_policy_path(self, tmp_dir):
+        out = tmp_dir / "nested" / "mod.pyi"
+
+        _write_output_text(
+            out,
+            "x: int\n",
+            policy=IOPolicy.default().replace(
+                output_symlinks="allow",
+                existing="overwrite",
+            ),
+        )
+
+        assert out.read_text(encoding="utf-8") == "x: int\n"
+
+    def test_source_file_size_rejects_directory(self, tmp_dir):
+        with pytest.raises(OSError, match="not a regular file"):
+            _source_file_size(tmp_dir, follow_symlinks=False)
+
+
+class TestModuleEntrypoint:
+    def test_python_m_entrypoint(self, monkeypatch):
+        import tiny_stubgen.cli
+
+        monkeypatch.setattr(tiny_stubgen.cli, "main", lambda: 0)
+
+        with pytest.raises(SystemExit) as exc_info:
+            runpy.run_module("tiny_stubgen.__main__", run_name="__main__")
+
+        assert exc_info.value.code == 0
 
 
 class TestPathTraversal:

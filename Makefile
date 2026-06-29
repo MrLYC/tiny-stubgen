@@ -27,7 +27,7 @@ test-fast: ## 不统计覆盖率，快速运行测试
 	$(PYTEST)
 
 examples: ## 重新生成 examples 目录下的 .pyi 文件
-	tiny-stubgen examples/ -o examples/ --overwrite
+	tiny-stubgen examples/ -o examples/ --overwrite --import-mode all --decorator-mode all-safe --emit-typing-assignments --emit-class-keywords
 
 check-examples: examples ## 检查 .pyi 文件是否与源码同步
 	@if git diff --quiet -- 'examples/*.pyi'; then \
