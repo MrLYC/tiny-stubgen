@@ -28,10 +28,17 @@ def resolve_exports(module: ModuleStub) -> ModuleStub:
         allowed = set(module.all_names)
 
         # Warn about names in __all__ that don't exist in the module
+        import_names = {
+            alias or name
+            for imp in module.imports
+            if not imp.is_star
+            for name, alias in imp.names
+        }
         defined = (
             {v.name for v in module.variables}
             | {f.name for f in module.functions}
             | {c.name for c in module.classes}
+            | import_names
         )
         missing = allowed - defined
         for name in sorted(missing):
@@ -70,12 +77,12 @@ def deduplicate_imports(module: ModuleStub) -> ModuleStub:
         key = (imp.module, imp.level)
         if key in merged:
             existing = merged[key]
-            existing_names = {n for n, _ in existing.names}
+            existing_names = set(existing.names)
             new_names = list(existing.names)
             for name, alias in imp.names:
-                if name not in existing_names:
+                if (name, alias) not in existing_names:
                     new_names.append((name, alias))
-                    existing_names.add(name)
+                    existing_names.add((name, alias))
             # Build new ImportInfo with merged names
             merged[key] = ImportInfo(
                 module=existing.module,

@@ -29,8 +29,8 @@ def walk_python_files(
 ) -> Iterator[Path]:
     """Yield all .py files in directory, skipping common non-source dirs.
 
-    Symlink cycles are detected via inode/device tracking to prevent
-    infinite recursion.
+    Symlinked files and directories are skipped to keep traversal within the
+    requested source tree.
     """
     if _seen is None:
         _seen = set()
@@ -45,6 +45,8 @@ def walk_python_files(
     _seen.add(key)
 
     for child in sorted(directory.iterdir()):
+        if child.is_symlink():
+            continue
         if child.is_dir():
             if child.name in _SKIP_DIRS or child.name.startswith("."):
                 continue

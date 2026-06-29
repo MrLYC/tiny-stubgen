@@ -90,6 +90,18 @@ class TestDeduplicateImports:
         names = [n for n, _ in from_imports[0].names]
         assert names.count("path") == 1
 
+    def test_same_imported_name_with_different_aliases_preserved(self):
+        mod = ModuleStub(
+            imports=[
+                ImportInfo(module="pkg", names=[("value", "a")]),
+                ImportInfo(module="pkg", names=[("value", "b")]),
+            ]
+        )
+        result = deduplicate_imports(mod)
+        from_imports = [i for i in result.imports if i.is_from_import]
+        assert len(from_imports) == 1
+        assert from_imports[0].names == [("value", "a"), ("value", "b")]
+
     def test_plain_imports_kept_separate(self):
         mod = ModuleStub(
             imports=[
@@ -170,6 +182,17 @@ class TestAllWarnings:
         mod = ModuleStub(
             all_names=["x"],
             variables=[VariableInfo(name="x")],
+        )
+        resolve_exports(mod)
+        stderr = capsys.readouterr().err
+        assert stderr == ""
+
+    def test_no_warning_when_all_names_reexport_imports(self, capsys):
+        mod = ModuleStub(
+            all_names=["Public", "alias"],
+            imports=[
+                ImportInfo(module="pkg", names=[("Public", None), ("Private", "alias")])
+            ],
         )
         resolve_exports(mod)
         stderr = capsys.readouterr().err

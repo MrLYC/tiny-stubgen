@@ -117,8 +117,26 @@ def process_file(
         return "error"
 
     # Write output
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(stub_content, encoding="utf-8")
+    try:
+        if output_path.is_symlink():
+            print(
+                f"  error writing {output_path}: refusing to write through symlink",
+                file=sys.stderr,
+            )
+            return "error"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if not overwrite:
+            with output_path.open("x", encoding="utf-8") as f:
+                f.write(stub_content)
+        else:
+            output_path.write_text(stub_content, encoding="utf-8")
+    except FileExistsError:
+        if not quiet:
+            print(f"  skip (exists): {output_path}", file=sys.stderr)
+        return "skipped"
+    except OSError as e:
+        print(f"  error writing {output_path}: {e}", file=sys.stderr)
+        return "error"
 
     if verbose:
         print(f"  generated: {output_path}")
@@ -147,7 +165,12 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"Skipping non-Python file: {path}", file=sys.stderr)
                 continue
 
-            output = _get_output_path(path, path.parent, args.output_dir)
+            try:
+                output = _get_output_path(path, path.parent, args.output_dir)
+            except ValueError as e:
+                print(f"Output path error for {path}: {e}", file=sys.stderr)
+                errors += 1
+                continue
             total += 1
             result = process_file(
                 path,
@@ -167,7 +190,12 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Processing directory: {path}")
 
             for py_file in walk_python_files(path):
-                output = _get_output_path(py_file, path, args.output_dir)
+                try:
+                    output = _get_output_path(py_file, path, args.output_dir)
+                except ValueError as e:
+                    print(f"Output path error for {py_file}: {e}", file=sys.stderr)
+                    errors += 1
+                    continue
                 total += 1
                 result = process_file(
                     py_file,
@@ -183,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
                     errors += 1
         else:
             print(f"Path not found: {path}", file=sys.stderr)
+            errors += 1
 
     if not quiet:
         print(f"\nProcessed {success}/{total} files.")

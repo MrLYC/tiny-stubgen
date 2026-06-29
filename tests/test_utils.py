@@ -125,6 +125,18 @@ class TestWalkPythonFiles:
         names = [f.name for f in files]
         assert names == sorted(names)
 
+    def test_skips_symlinked_directories(self, tmp_path: Path):
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "outside.py").touch()
+        root = tmp_path / "root"
+        root.mkdir()
+        (root / "inside.py").touch()
+        (root / "link").symlink_to(outside, target_is_directory=True)
+        files = list(walk_python_files(root))
+        names = [f.name for f in files]
+        assert names == ["inside.py"]
+
     def test_symlink_cycle_protection(self, tmp_path: Path):
         """Symlink cycle should not cause infinite recursion."""
         sub = tmp_path / "sub"
@@ -133,7 +145,6 @@ class TestWalkPythonFiles:
         # Create symlink loop: sub/loop -> tmp_path
         loop = sub / "loop"
         loop.symlink_to(tmp_path)
-        # Should terminate without RecursionError
         files = list(walk_python_files(tmp_path))
         names = [f.name for f in files]
-        assert "mod.py" in names
+        assert names == ["mod.py"]

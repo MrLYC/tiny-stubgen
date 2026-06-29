@@ -562,6 +562,25 @@ else:
         assert len(block.body_imports) == 1
         assert len(block.else_imports) == 1
 
+    def test_version_check_with_elif(self):
+        source = """
+import sys
+if sys.version_info >= (3, 12):
+    from new import value
+elif sys.version_info >= (3, 11):
+    from mid import value
+else:
+    from old import value
+"""
+        mod = _extract(source)
+        block = mod.conditional_blocks[0]
+        assert len(block.body_imports) == 1
+        assert len(block.else_conditionals) == 1
+        elif_block = block.else_conditionals[0]
+        assert "sys.version_info" in elif_block.test
+        assert len(elif_block.body_imports) == 1
+        assert len(elif_block.else_imports) == 1
+
 
 class TestPropertyCallForm:
     def test_property_fget_keyword_none(self):

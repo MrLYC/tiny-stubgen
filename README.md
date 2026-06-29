@@ -223,7 +223,7 @@ stub = generate_stub(source)
 print(stub)
 ```
 
-也可以导入核心组件自行组装管线：
+也可以导入核心组件自行组装管线。注意这些高级组件接口目前不承诺稳定；稳定公共 API 仅包括 `generate_stub` 和 `__version__`：
 
 ```python
 from tiny_stubgen import StubExtractor, StubEmitter, postprocess

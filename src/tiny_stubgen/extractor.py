@@ -807,13 +807,16 @@ class StubExtractor(ast.NodeVisitor):
             )
 
         for stmt in node.orelse:
-            self._collect_into_block(
-                stmt,
-                block.else_imports,
-                block.else_variables,
-                block.else_functions,
-                block.else_classes,
-            )
+            if isinstance(stmt, ast.If) and self._is_conditional_import(stmt):
+                block.else_conditionals.append(self._extract_conditional_block(stmt))
+            else:
+                self._collect_into_block(
+                    stmt,
+                    block.else_imports,
+                    block.else_variables,
+                    block.else_functions,
+                    block.else_classes,
+                )
 
         return block
 
@@ -885,8 +888,11 @@ class StubExtractor(ast.NodeVisitor):
             existing_is_overload = DecoratorKind.OVERLOAD in existing.decorators
             if is_overload:
                 if existing_is_overload and not existing.overloads:
-                    placeholder = FunctionInfo(name=func.name)
-                    placeholder.overloads = [existing, func]
+                    placeholder = FunctionInfo(
+                        name=func.name,
+                        overloads=[existing, func],
+                        is_overload_placeholder=True,
+                    )
                     target[i] = placeholder
                 else:
                     existing.overloads.append(func)
@@ -896,6 +902,7 @@ class StubExtractor(ast.NodeVisitor):
                 if existing_is_overload and not overloads:
                     overloads = [existing]
                 func.overloads = overloads
+                func.is_overload_placeholder = False
                 target[i] = func
             return
 

@@ -66,6 +66,7 @@ class FunctionInfo:
     raw_decorators: list[str] = field(default_factory=list)
     is_async: bool = False
     overloads: list[FunctionInfo] = field(default_factory=list)
+    is_overload_placeholder: bool = False
 
 
 @dataclass
@@ -117,6 +118,7 @@ class ConditionalBlock:
     else_variables: list[VariableInfo] = field(default_factory=list)
     else_functions: list[FunctionInfo] = field(default_factory=list)
     else_classes: list[ClassInfo] = field(default_factory=list)
+    else_conditionals: list[ConditionalBlock] = field(default_factory=list)
 
 
 @dataclass

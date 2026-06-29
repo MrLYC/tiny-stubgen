@@ -63,6 +63,16 @@ class TestProcessFile:
         assert process_file(src, out) == "ok"
         assert out.exists()
 
+    def test_refuses_symlink_output(self, tmp_dir):
+        src = tmp_dir / "mod.py"
+        target = tmp_dir / "target.pyi"
+        out = tmp_dir / "mod.pyi"
+        _write(src, "x: int = 1\n")
+        _write(target, "old")
+        out.symlink_to(target)
+        assert process_file(src, out, overwrite=True) == "error"
+        assert target.read_text() == "old"
+
     def test_include_private(self, tmp_dir):
         src = tmp_dir / "mod.py"
         out = tmp_dir / "mod.pyi"
@@ -106,7 +116,7 @@ class TestMain:
 
     def test_missing_path(self, tmp_dir):
         ret = main([str(tmp_dir / "nope.py")])
-        assert ret == 0  # 0 total → treated as success (path warning on stderr)
+        assert ret == 1
 
     def test_quiet_mode(self, tmp_dir, capsys):
         src = tmp_dir / "mod.py"

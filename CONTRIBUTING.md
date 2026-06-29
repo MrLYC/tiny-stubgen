@@ -25,16 +25,16 @@ pre-commit install --hook-type pre-commit --hook-type pre-push
 
 ```bash
 # 检查
-ruff check src/ tests/
+make lint
 
 # 格式化
-ruff format src/ tests/
+make format
 
 # 完整格式检查
 make format-check
 ```
 
-CI 会自动运行 lint、格式、类型、测试、示例同步、文档链接和包构建检查，请确保提交前通过 `make verify`。
+CI 会自动运行 lint、格式、类型、测试、示例同步、文档链接和包构建检查，请确保提交前通过 `make verify`。修改生成逻辑后，还应运行 `make check-examples` 确认 `examples/*.pyi` 已同步。
 
 ## 类型检查
 

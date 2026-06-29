@@ -73,6 +73,20 @@ def foo(x): return x
         assert "def foo(x: int) -> int: ..." in stub
         assert "def foo(x: str) -> str: ..." in stub
 
+    def test_overload_only_does_not_emit_placeholder_implementation(self):
+        source = """
+from typing import overload
+
+@overload
+def foo(x: int) -> int: ...
+@overload
+def foo(x: str) -> str: ...
+"""
+        stub = _generate_stub(source)
+        assert "def foo(x: int) -> int: ..." in stub
+        assert "def foo(x: str) -> str: ..." in stub
+        assert "def foo(): ..." not in stub
+
     def test_inferred_default_type(self):
         stub = _generate_stub("def foo(x=42): ...")
         assert "x: int = ..." in stub
@@ -363,6 +377,24 @@ else:
         assert "from tomllib import loads" in stub
         assert "else:" in stub
         assert "from tomli import loads" in stub
+
+    def test_version_check_with_elif(self):
+        source = """
+import sys
+if sys.version_info >= (3, 12):
+    from new import value
+elif sys.version_info >= (3, 11):
+    from mid import value
+else:
+    from old import value
+"""
+        stub = _generate_stub(source)
+        assert "if sys.version_info >= (3, 12):" in stub
+        assert "from new import value" in stub
+        assert "elif sys.version_info >= (3, 11):" in stub
+        assert "from mid import value" in stub
+        assert "else:" in stub
+        assert "from old import value" in stub
 
 
 class TestImportEdgeCases:

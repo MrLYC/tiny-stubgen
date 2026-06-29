@@ -247,7 +247,8 @@ class StubEmitter:
             self._emit_single_function(overload)
 
         # Emit the implementation (or the only signature)
-        self._emit_single_function(func)
+        if not func.is_overload_placeholder:
+            self._emit_single_function(func)
 
     def _emit_single_function(self, func: FunctionInfo) -> None:
         """Emit a single function signature."""
@@ -265,6 +266,8 @@ class StubEmitter:
         parts: list[str] = []
         seen_keyword_only = False
         needs_slash = False
+
+        has_var_pos = any(p.kind == ParameterKind.VAR_POSITIONAL for p in params)
 
         for param in params:
             if param.kind == ParameterKind.POSITIONAL_ONLY:
@@ -285,10 +288,6 @@ class StubEmitter:
                     parts.append("/")
                     needs_slash = False
                 if not seen_keyword_only:
-                    # Check if there was a *args before
-                    has_var_pos = any(
-                        p.kind == ParameterKind.VAR_POSITIONAL for p in params
-                    )
                     if not has_var_pos:
                         parts.append("*")
                     seen_keyword_only = True
@@ -387,10 +386,14 @@ class StubEmitter:
 
     # ── Conditional blocks ───────────────────────────────────────────
 
-    def _emit_conditional_block(self, block: ConditionalBlock) -> None:
-        """Emit an if/else block (e.g. platform checks)."""
-        self._blank_line()
-        self._line(f"if {self._sanitize(block.test)}:")
+    def _emit_conditional_block(
+        self, block: ConditionalBlock, *, as_elif: bool = False
+    ) -> None:
+        """Emit an if/elif/else block (e.g. platform checks)."""
+        if not as_elif:
+            self._blank_line()
+        keyword = "elif" if as_elif else "if"
+        self._line(f"{keyword} {self._sanitize(block.test)}:")
         self._indent += 1
 
         has_body = False
@@ -416,8 +419,19 @@ class StubEmitter:
             or block.else_variables
             or block.else_functions
             or block.else_classes
+            or block.else_conditionals
         )
         if has_else:
+            if (
+                len(block.else_conditionals) == 1
+                and not block.else_imports
+                and not block.else_variables
+                and not block.else_functions
+                and not block.else_classes
+            ):
+                self._emit_conditional_block(block.else_conditionals[0], as_elif=True)
+                return
+
             self._line("else:")
             self._indent += 1
             for imp in block.else_imports:
@@ -428,6 +442,8 @@ class StubEmitter:
                 self._emit_single_function(func)
             for cls in block.else_classes:
                 self._emit_class(cls)
+            for conditional in block.else_conditionals:
+                self._emit_conditional_block(conditional)
             self._indent -= 1
 
     # ── Typing imports collection ────────────────────────────────────
@@ -470,14 +486,21 @@ class StubEmitter:
             self._gather_class_annotations(cls, annotations)
 
         for block in self.module.conditional_blocks:
-            for var in block.body_variables + block.else_variables:
-                annotations.append(var.annotation)
-            for func in block.body_functions + block.else_functions:
-                self._gather_func_annotations(func, annotations)
-            for cls in block.body_classes + block.else_classes:
-                self._gather_class_annotations(cls, annotations)
+            self._gather_conditional_annotations(block, annotations)
 
         return annotations
+
+    def _gather_conditional_annotations(
+        self, block: ConditionalBlock, out: list[str | None]
+    ) -> None:
+        for var in block.body_variables + block.else_variables:
+            out.append(var.annotation)
+        for func in block.body_functions + block.else_functions:
+            self._gather_func_annotations(func, out)
+        for cls in block.body_classes + block.else_classes:
+            self._gather_class_annotations(cls, out)
+        for conditional in block.else_conditionals:
+            self._gather_conditional_annotations(conditional, out)
 
     def _gather_class_annotations(self, cls: ClassInfo, out: list[str | None]) -> None:
         for attr in cls.attributes:
