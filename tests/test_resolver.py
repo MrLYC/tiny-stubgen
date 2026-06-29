@@ -7,6 +7,7 @@ from tiny_stubgen.models import (
     ModuleStub,
     VariableInfo,
 )
+from tiny_stubgen.policies import GenerationPolicy
 from tiny_stubgen.resolver import deduplicate_imports, postprocess, resolve_exports
 
 
@@ -31,6 +32,19 @@ class TestResolveExports:
         assert [v.name for v in result.variables] == ["public", "__dunder__"]
         assert [f.name for f in result.functions] == ["pub_func"]
         assert [c.name for c in result.classes] == ["PubClass"]
+
+    def test_dunder_policy_magic_drops_custom_dunder(self):
+        mod = ModuleStub(
+            variables=[
+                VariableInfo(name="public"),
+                VariableInfo(name="__dunder__"),
+            ],
+        )
+        result = resolve_exports(
+            mod,
+            policy=GenerationPolicy.safe(),
+        )
+        assert [v.name for v in result.variables] == ["public"]
 
     def test_all_filters(self):
         mod = ModuleStub(
@@ -159,6 +173,22 @@ class TestPostprocess:
         )
         result = postprocess(mod, include_private=True)
         assert len(result.variables) == 2
+
+    def test_include_private_skips_all_filtering(self):
+        mod = ModuleStub(
+            all_names=["pub"],
+            variables=[VariableInfo(name="_priv"), VariableInfo(name="pub")],
+        )
+        result = postprocess(mod, include_private=True)
+        assert [v.name for v in result.variables] == ["_priv", "pub"]
+
+    def test_all_does_not_bypass_private_filtering(self):
+        mod = ModuleStub(
+            all_names=["_priv", "pub"],
+            variables=[VariableInfo(name="_priv"), VariableInfo(name="pub")],
+        )
+        result = postprocess(mod, policy=GenerationPolicy.strict())
+        assert [v.name for v in result.variables] == ["pub"]
 
     def test_default_filters_private(self):
         mod = ModuleStub(

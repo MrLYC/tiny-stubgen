@@ -6,23 +6,41 @@ import sys
 from dataclasses import replace
 
 from .models import ImportInfo, ModuleStub
-from .utils import is_public
+from .policies import GenerationPolicy
+from .utils import is_public_name
 
 
-def resolve_exports(module: ModuleStub) -> ModuleStub:
+def resolve_exports(
+    module: ModuleStub,
+    *,
+    policy: GenerationPolicy | None = None,
+) -> ModuleStub:
     """Filter module contents based on __all__ if present.
 
     Returns a new ModuleStub with filtered contents; the input is not modified.
     When __all__ is defined, only names listed in it are kept.
     When __all__ is None, all public names are kept.
     """
+    policy = policy or GenerationPolicy.default()
     if module.all_names is None:
         # No __all__ — keep all public names
         return replace(
             module,
-            variables=[v for v in module.variables if is_public(v.name)],
-            functions=[f for f in module.functions if is_public(f.name)],
-            classes=[c for c in module.classes if is_public(c.name)],
+            variables=[
+                v
+                for v in module.variables
+                if is_public_name(v.name, dunder_policy=policy.dunder_policy)
+            ],
+            functions=[
+                f
+                for f in module.functions
+                if is_public_name(f.name, dunder_policy=policy.dunder_policy)
+            ],
+            classes=[
+                c
+                for c in module.classes
+                if is_public_name(c.name, dunder_policy=policy.dunder_policy)
+            ],
         )
     else:
         allowed = set(module.all_names)
@@ -41,17 +59,42 @@ def resolve_exports(module: ModuleStub) -> ModuleStub:
             | import_names
         )
         missing = allowed - defined
-        for name in sorted(missing):
-            print(
-                f"  warning: __all__ references undefined name {name!r}",
-                file=sys.stderr,
-            )
+        if policy.warn_undefined_all:
+            for name in sorted(missing):
+                print(
+                    f"  warning: __all__ references undefined name {name!r}",
+                    file=sys.stderr,
+                )
 
         return replace(
             module,
-            variables=[v for v in module.variables if v.name in allowed],
-            functions=[f for f in module.functions if f.name in allowed],
-            classes=[c for c in module.classes if c.name in allowed],
+            variables=[
+                v
+                for v in module.variables
+                if v.name in allowed
+                and (
+                    policy.include_private
+                    or is_public_name(v.name, dunder_policy=policy.dunder_policy)
+                )
+            ],
+            functions=[
+                f
+                for f in module.functions
+                if f.name in allowed
+                and (
+                    policy.include_private
+                    or is_public_name(f.name, dunder_policy=policy.dunder_policy)
+                )
+            ],
+            classes=[
+                c
+                for c in module.classes
+                if c.name in allowed
+                and (
+                    policy.include_private
+                    or is_public_name(c.name, dunder_policy=policy.dunder_policy)
+                )
+            ],
         )
 
 
@@ -104,12 +147,49 @@ def deduplicate_imports(module: ModuleStub) -> ModuleStub:
     )
 
 
-def postprocess(module: ModuleStub, *, include_private: bool = False) -> ModuleStub:
+def filter_private_names(module: ModuleStub, *, policy: GenerationPolicy) -> ModuleStub:
+    """Filter top-level private names when private output is disabled."""
+    if policy.include_private:
+        return module
+    return replace(
+        module,
+        variables=[
+            v
+            for v in module.variables
+            if is_public_name(v.name, dunder_policy=policy.dunder_policy)
+        ],
+        functions=[
+            f
+            for f in module.functions
+            if is_public_name(f.name, dunder_policy=policy.dunder_policy)
+        ],
+        classes=[
+            c
+            for c in module.classes
+            if is_public_name(c.name, dunder_policy=policy.dunder_policy)
+        ],
+    )
+
+
+def postprocess(
+    module: ModuleStub,
+    *,
+    include_private: bool | None = None,
+    policy: GenerationPolicy | None = None,
+) -> ModuleStub:
     """Run all post-processing steps on a module.
 
     Returns a new ModuleStub; the input is not modified.
     """
+    resolved_policy = policy or GenerationPolicy.default()
+    if include_private is not None:
+        resolved_policy = resolved_policy.replace(include_private=include_private)
+
     result = deduplicate_imports(module)
-    if not include_private:
-        result = resolve_exports(result)
+    if resolved_policy.include_private:
+        return result
+    if resolved_policy.respect_all and result.all_names is not None:
+        result = resolve_exports(result, policy=resolved_policy)
+    else:
+        result = filter_private_names(result, policy=resolved_policy)
     return result

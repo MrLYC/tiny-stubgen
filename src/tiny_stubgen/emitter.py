@@ -18,8 +18,10 @@ from .models import (
     ParameterKind,
     VariableInfo,
 )
+from .policies import GenerationPolicy
 from .utils import (
     is_private,
+    is_public_name,
     is_safe_dotted_name_text,
     is_valid_identifier,
     safe_unparse_class_keyword_expr_from_text,
@@ -72,9 +74,18 @@ _TYPING_NAMES = {
 class StubEmitter:
     """Generates .pyi content from a ModuleStub."""
 
-    def __init__(self, module: ModuleStub, *, include_private: bool = False) -> None:
+    def __init__(
+        self,
+        module: ModuleStub,
+        *,
+        include_private: bool | None = None,
+        policy: GenerationPolicy | None = None,
+    ) -> None:
         self.module = module
-        self.include_private = include_private
+        self.policy = policy or GenerationPolicy.default()
+        if include_private is not None:
+            self.policy = self.policy.replace(include_private=include_private)
+        self.include_private = self.policy.include_private
         self._lines: list[str] = []
         self._indent = 0
 
@@ -86,12 +97,17 @@ class StubEmitter:
         # Collect typing names needed by inferred annotations
         needed_typing = self._collect_needed_typing()
 
+        if self.policy.include_docstrings and self.module.docstring:
+            self._line(repr(self.module.docstring))
+            self._blank_line()
+
         # Emit imports
         self._emit_imports(needed_typing)
 
         # Emit conditional blocks
-        for block in self.module.conditional_blocks:
-            self._emit_conditional_block(block)
+        if self.policy.emit_conditionals:
+            for block in self.module.conditional_blocks:
+                self._emit_conditional_block(block)
 
         # Emit module-level variables
         for var in self.module.variables:
@@ -124,6 +140,8 @@ class StubEmitter:
         future_imports: list[ImportInfo] = []
         typing_imports: list[ImportInfo] = []
         regular_imports: list[ImportInfo] = []
+        used_names = self._collect_used_annotation_names()
+        re_exported = set(self.module.all_names) if self.module.all_names else set()
 
         for imp in self.module.imports:
             if imp.module == "__future__":
@@ -140,10 +158,23 @@ class StubEmitter:
                     )
                     typing_imports.append(filtered)
             elif imp.is_type_checking:
-                # TYPE_CHECKING-guarded imports become regular imports in stubs
-                regular_imports.append(imp)
+                if self.policy.promote_type_checking_imports == "all":
+                    regular_imports.append(imp)
+                elif (
+                    self.policy.promote_type_checking_imports == "needed"
+                    and self._import_needed(imp, used_names, re_exported)
+                ):
+                    regular_imports.append(imp)
             else:
-                regular_imports.append(imp)
+                if self.policy.import_mode != "typing-only":
+                    regular_imports.append(imp)
+
+        if self.policy.import_mode == "needed":
+            regular_imports = [
+                imp
+                for imp in regular_imports
+                if self._import_needed(imp, used_names, re_exported)
+            ]
 
         # Merge all typing imports into a single statement per module
         if needed_typing or typing_imports:
@@ -180,6 +211,15 @@ class StubEmitter:
             ]
 
         # Emit __future__ first
+        if self.policy.force_future_annotations and not any(
+            any(name == "annotations" for name, _ in imp.names)
+            for imp in future_imports
+        ):
+            future_imports.insert(
+                0,
+                ImportInfo(module="__future__", names=[("annotations", None)]),
+            )
+
         for imp in future_imports:
             self._emit_import(imp)
 
@@ -200,6 +240,23 @@ class StubEmitter:
         if future_imports or regular_imports or typing_imports:
             self._blank_line()
 
+    @staticmethod
+    def _import_needed(
+        imp: ImportInfo,
+        used_names: set[str],
+        re_exported: set[str],
+    ) -> bool:
+        if imp.is_star:
+            return False
+        for name, alias in imp.names:
+            imported_name = alias or name
+            root_name = imported_name.split(".", 1)[0]
+            if imported_name in used_names or root_name in used_names:
+                return True
+            if imported_name in re_exported or name in re_exported:
+                return True
+        return False
+
     def _emit_import(self, imp: ImportInfo) -> None:
         """Emit a single import statement."""
         # Names in __all__ that are re-exported need explicit `as X` form
@@ -207,6 +264,8 @@ class StubEmitter:
         re_exported = set(self.module.all_names) if self.module.all_names else set()
 
         if imp.is_star:
+            if not self.policy.emit_star_imports:
+                return
             if imp.module and not is_safe_dotted_name_text(imp.module):
                 return
             prefix = "." * imp.level if imp.level else ""
@@ -254,7 +313,11 @@ class StubEmitter:
 
         if var.assign_value is not None:
             # Assignment form: TypeVar, ParamSpec, etc.
-            assign_value = safe_unparse_typing_assignment_from_text(var.assign_value)
+            assign_value = (
+                safe_unparse_typing_assignment_from_text(var.assign_value)
+                if self.policy.emit_typing_assignments
+                else None
+            )
             if assign_value is not None:
                 self._line(f"{var.name} = {assign_value}")
             elif annotation:
@@ -262,6 +325,9 @@ class StubEmitter:
             else:
                 self._line(f"{var.name}: Any")
         elif var.is_type_alias:
+            if self.policy.type_alias_mode == "none":
+                self._line(f"{var.name}: Any")
+                return
             if annotation and "TypeAlias" not in annotation:
                 self._line(f"{var.name}: TypeAlias = {annotation}")
             else:
@@ -392,18 +458,21 @@ class StubEmitter:
             if safe_dec is not None:
                 self._line(f"@{safe_dec}")
 
-        bases_parts = [
-            safe_base
-            for base in cls.bases
-            if (safe_base := safe_unparse_type_expr_from_text(base, fallback=None))
-            is not None
-        ]
-        for key, val in cls.keywords:
-            if not is_valid_identifier(key):
-                continue
-            safe_val = safe_unparse_class_keyword_expr_from_text(val)
-            if safe_val is not None:
-                bases_parts.append(f"{key}={safe_val}")
+        bases_parts: list[str] = []
+        if self.policy.emit_class_bases:
+            bases_parts.extend(
+                safe_base
+                for base in cls.bases
+                if (safe_base := safe_unparse_type_expr_from_text(base, fallback=None))
+                is not None
+            )
+        if self.policy.emit_class_keywords:
+            for key, val in cls.keywords:
+                if not is_valid_identifier(key):
+                    continue
+                safe_val = safe_unparse_class_keyword_expr_from_text(val)
+                if safe_val is not None:
+                    bases_parts.append(f"{key}={safe_val}")
 
         bases_str = f"({', '.join(bases_parts)})" if bases_parts else ""
         self._line(f"class {cls.name}{bases_str}:")
@@ -414,26 +483,36 @@ class StubEmitter:
 
         # Emit attributes (filter private unless requested, keep ClassVar/Final)
         for attr in cls.attributes:
-            if (
-                not self.include_private
+            attr_allowed = self.include_private or is_public_name(
+                attr.name,
+                dunder_policy=self.policy.dunder_policy,
+            )
+            attr_allowed = attr_allowed or (
+                self.policy.include_private_class_constants
                 and is_private(attr.name)
-                and not attr.is_class_var
-                and not attr.is_final
-            ):
+                and (attr.is_class_var or attr.is_final)
+            )
+            if not attr_allowed:
                 continue
             self._emit_attribute(attr)
             has_body = True
 
         # Emit inner classes
         for inner in cls.inner_classes:
-            if not self.include_private and is_private(inner.name):
+            if not self.include_private and not is_public_name(
+                inner.name,
+                dunder_policy=self.policy.dunder_policy,
+            ):
                 continue
             self._emit_class(inner)
             has_body = True
 
         # Emit methods (filter private unless requested)
         for method in cls.methods:
-            if not self.include_private and is_private(method.name):
+            if not self.include_private and not is_public_name(
+                method.name,
+                dunder_policy=self.policy.dunder_policy,
+            ):
                 continue
             self._emit_function(method)
             has_body = True
@@ -450,7 +529,8 @@ class StubEmitter:
         if attr.is_enum_member:
             self._line(f"{attr.name} = ...")
         elif attr.annotation:
-            self._line(f"{attr.name}: {self._safe_annotation(attr.annotation)}")
+            annotation = self._safe_annotation(attr.annotation)
+            self._line(f"{attr.name}: {annotation or 'Any'}")
         else:
             self._line(f"{attr.name}: Any")
 
@@ -529,7 +609,7 @@ class StubEmitter:
 
         for ann in all_annotations:
             if ann:
-                ann = safe_unparse_type_expr_from_text(ann, fallback="Any")
+                ann = self._safe_annotation(ann)
                 if ann is None:
                     continue
                 for name in _TYPING_NAMES:
@@ -538,7 +618,9 @@ class StubEmitter:
 
         # Check if we reference Any in variables without annotations
         for var in self.module.variables:
-            if var.annotation is None:
+            if var.annotation is None or (
+                var.is_type_alias and self.policy.type_alias_mode == "none"
+            ):
                 needed.add("Any")
         for cls in self.module.classes:
             for attr in cls.attributes:
@@ -546,6 +628,86 @@ class StubEmitter:
                     needed.add("Any")
 
         return needed
+
+    def _collect_used_annotation_names(self) -> set[str]:
+        """Collect names referenced by emitted type/runtime expressions."""
+        names: set[str] = set()
+        for ann in self._gather_all_annotations():
+            if not ann:
+                continue
+            safe_ann = self._safe_annotation(ann)
+            if safe_ann is None:
+                continue
+            self._add_referenced_names(names, safe_ann)
+
+        for cls in self.module.classes:
+            self._gather_class_used_names(cls, names)
+
+        for func in self.module.functions:
+            self._gather_function_used_names(func, names)
+
+        for block in self.module.conditional_blocks:
+            self._gather_conditional_used_names(block, names)
+
+        if self.module.all_names:
+            names.update(self.module.all_names)
+        return names
+
+    @staticmethod
+    def _add_referenced_names(names: set[str], text: str) -> None:
+        names.update(re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", text))
+
+    def _gather_function_used_names(
+        self,
+        func: FunctionInfo,
+        names: set[str],
+    ) -> None:
+        for i, kind in enumerate(func.decorators):
+            raw = func.raw_decorators[i] if i < len(func.raw_decorators) else ""
+            safe_dec = self._safe_function_decorator(kind, raw, func.name)
+            if safe_dec is not None:
+                self._add_referenced_names(names, safe_dec)
+        for overload in func.overloads:
+            self._gather_function_used_names(overload, names)
+
+    def _gather_class_used_names(
+        self,
+        cls: ClassInfo,
+        names: set[str],
+    ) -> None:
+        if self.policy.emit_class_bases:
+            for base in cls.bases:
+                safe_base = safe_unparse_type_expr_from_text(base, fallback=None)
+                if safe_base is not None:
+                    self._add_referenced_names(names, safe_base)
+        if self.policy.emit_class_keywords:
+            for _, value in cls.keywords:
+                safe_value = safe_unparse_class_keyword_expr_from_text(value)
+                if safe_value is not None:
+                    self._add_referenced_names(names, safe_value)
+        for dec in cls.decorators:
+            safe_dec = self._safe_class_decorator(dec)
+            if safe_dec is not None:
+                self._add_referenced_names(names, safe_dec)
+        for method in cls.methods:
+            self._gather_function_used_names(method, names)
+        for inner in cls.inner_classes:
+            self._gather_class_used_names(inner, names)
+
+    def _gather_conditional_used_names(
+        self,
+        block: ConditionalBlock,
+        names: set[str],
+    ) -> None:
+        safe_test = safe_unparse_conditional_test_from_text(block.test)
+        if safe_test is not None:
+            self._add_referenced_names(names, safe_test)
+        for func in block.body_functions + block.else_functions:
+            self._gather_function_used_names(func, names)
+        for cls in block.body_classes + block.else_classes:
+            self._gather_class_used_names(cls, names)
+        for conditional in block.else_conditionals:
+            self._gather_conditional_used_names(conditional, names)
 
     def _gather_all_annotations(self) -> list[str | None]:
         """Collect all annotation strings from the module."""
@@ -607,18 +769,27 @@ class StubEmitter:
         """
         return text.replace("\n", " ").replace("\r", " ")
 
-    @staticmethod
-    def _safe_annotation(text: str | None) -> str | None:
+    def _safe_annotation(self, text: str | None) -> str | None:
         if text is None:
             return None
-        return safe_unparse_type_expr_from_text(text, fallback="Any")
+        if self.policy.annotation_mode == "none":
+            return None
+        if self.policy.annotation_mode == "any":
+            return "Any"
+        annotation = safe_unparse_type_expr_from_text(text, fallback="Any")
+        if annotation and not self.policy.emit_literal_values:
+            if re.search(r"\bLiteral\b", annotation):
+                return "Any"
+        return annotation
 
-    @staticmethod
     def _safe_function_decorator(
+        self,
         kind: DecoratorKind,
         raw: str,
         func_name: str,
     ) -> str | None:
+        if self.policy.decorator_mode == "none":
+            return None
         if kind == DecoratorKind.PROPERTY:
             return "property"
         if kind == DecoratorKind.CLASSMETHOD:
@@ -628,8 +799,10 @@ class StubEmitter:
         if kind == DecoratorKind.OVERLOAD:
             return "overload"
         if kind == DecoratorKind.DATACLASS:
-            return "dataclass"
+            return "dataclass" if self.policy.emit_dataclass_decorators else None
         if kind == DecoratorKind.ABSTRACTMETHOD:
+            if self.policy.decorator_mode != "all-safe":
+                return None
             return raw if is_safe_dotted_name_text(raw) else "abstractmethod"
         if kind in (DecoratorKind.SETTER, DecoratorKind.DELETER):
             suffix = "setter" if kind == DecoratorKind.SETTER else "deleter"
@@ -639,8 +812,9 @@ class StubEmitter:
                 return f"{func_name}.{suffix}"
         return None
 
-    @staticmethod
-    def _safe_class_decorator(text: str) -> str | None:
+    def _safe_class_decorator(self, text: str) -> str | None:
+        if not self.policy.emit_dataclass_decorators:
+            return None
         try:
             node = ast.parse(text, mode="eval").body
         except SyntaxError:

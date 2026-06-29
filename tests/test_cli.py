@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from tiny_stubgen.cli import build_parser, main, process_file
+from tiny_stubgen.policies import IOPolicy
 
 
 @pytest.fixture
@@ -43,6 +44,19 @@ class TestProcessFile:
         _write(out, "old")
         assert process_file(src, out, overwrite=True) == "ok"
         assert "x: int" in out.read_text()
+
+    def test_existing_fail(self, tmp_dir):
+        src = tmp_dir / "mod.py"
+        out = tmp_dir / "mod.pyi"
+        _write(src, "x: int = 1\n")
+        _write(out, "old")
+        result = process_file(
+            src,
+            out,
+            io_policy=IOPolicy.default().replace(existing="fail"),
+        )
+        assert result == "error"
+        assert out.read_text() == "old"
 
     def test_syntax_error(self, tmp_dir):
         src = tmp_dir / "bad.py"
@@ -98,6 +112,36 @@ x = 1
         assert process_file(link, out) == "error"
         assert not out.exists()
 
+    def test_skips_symlink_source_when_requested(self, tmp_dir):
+        src = tmp_dir / "target.py"
+        link = tmp_dir / "link.py"
+        out = tmp_dir / "link.pyi"
+        _write(src, "x: int = 1\n")
+        link.symlink_to(src)
+        result = process_file(
+            link,
+            out,
+            io_policy=IOPolicy.default().replace(input_symlinks="skip"),
+        )
+        assert result == "skipped"
+        assert not out.exists()
+
+    def test_follows_symlink_source_when_allowed(self, tmp_dir):
+        src = tmp_dir / "target.py"
+        link = tmp_dir / "link.py"
+        out = tmp_dir / "link.pyi"
+        _write(src, "x: int = 1\n")
+        link.symlink_to(src)
+        assert (
+            process_file(
+                link,
+                out,
+                io_policy=IOPolicy.default().replace(input_symlinks="follow"),
+            )
+            == "ok"
+        )
+        assert "x: int" in out.read_text(encoding="utf-8")
+
     def test_refuses_symlink_output_parent(self, tmp_dir):
         src = tmp_dir / "mod.py"
         outside = tmp_dir / "outside"
@@ -107,6 +151,36 @@ x = 1
         _write(src, "x: int = 1\n")
         assert process_file(src, link_dir / "mod.pyi") == "error"
         assert not (outside / "mod.pyi").exists()
+
+    def test_allows_symlink_output_when_allowed(self, tmp_dir):
+        src = tmp_dir / "mod.py"
+        target = tmp_dir / "target.pyi"
+        out = tmp_dir / "mod.pyi"
+        _write(src, "x: int = 1\n")
+        _write(target, "old")
+        out.symlink_to(target)
+        result = process_file(
+            src,
+            out,
+            io_policy=IOPolicy.default().replace(
+                existing="overwrite",
+                output_symlinks="allow",
+            ),
+        )
+        assert result == "ok"
+        assert "x: int" in target.read_text(encoding="utf-8")
+
+    def test_create_output_dir_can_be_disabled(self, tmp_dir):
+        src = tmp_dir / "mod.py"
+        out = tmp_dir / "missing" / "mod.pyi"
+        _write(src, "x: int = 1\n")
+        result = process_file(
+            src,
+            out,
+            io_policy=IOPolicy.default().replace(create_output_dir=False),
+        )
+        assert result == "error"
+        assert not out.exists()
 
     def test_include_private(self, tmp_dir):
         src = tmp_dir / "mod.py"
@@ -134,6 +208,24 @@ class TestMain:
         assert (tmp_dir / "a.pyi").exists()
         assert (tmp_dir / "b.pyi").exists()
 
+    def test_directory_no_recursive(self, tmp_dir):
+        sub = tmp_dir / "pkg"
+        sub.mkdir()
+        _write(tmp_dir / "top.py", "x: int = 1\n")
+        _write(sub / "mod.py", "y: int = 2\n")
+        ret = main([str(tmp_dir), "--overwrite", "--no-recursive", "-q"])
+        assert ret == 0
+        assert (tmp_dir / "top.pyi").exists()
+        assert not (sub / "mod.pyi").exists()
+
+    def test_directory_include_hidden(self, tmp_dir):
+        hidden = tmp_dir / ".hidden"
+        hidden.mkdir()
+        _write(hidden / "mod.py", "x: int = 1\n")
+        ret = main([str(tmp_dir), "--overwrite", "--include-hidden", "-q"])
+        assert ret == 0
+        assert (hidden / "mod.pyi").exists()
+
     def test_output_dir(self, tmp_dir):
         src_dir = tmp_dir / "src"
         out_dir = tmp_dir / "out"
@@ -142,6 +234,45 @@ class TestMain:
         ret = main([str(src_dir), "-o", str(out_dir), "--overwrite"])
         assert ret == 0
         assert (out_dir / "mod.pyi").exists()
+
+    def test_output_scope_cwd_rejects_external_output(self, tmp_dir):
+        src = tmp_dir / "mod.py"
+        out_dir = tmp_dir / "out"
+        _write(src, "x: int = 1\n")
+        ret = main(
+            [
+                str(src),
+                "-o",
+                str(out_dir),
+                "--overwrite",
+                "--output-scope",
+                "cwd",
+                "-q",
+            ]
+        )
+        assert ret == 1
+        assert not (out_dir / "mod.pyi").exists()
+
+    def test_output_collision_fails_by_default(self, tmp_dir):
+        left = tmp_dir / "left" / "pkg"
+        right = tmp_dir / "right" / "pkg"
+        out_dir = tmp_dir / "out"
+        left.mkdir(parents=True)
+        right.mkdir(parents=True)
+        _write(left / "mod.py", "x: int = 1\n")
+        _write(right / "mod.py", "y: int = 2\n")
+        ret = main(
+            [
+                str(tmp_dir / "left"),
+                str(tmp_dir / "right"),
+                "-o",
+                str(out_dir),
+                "--overwrite",
+                "-q",
+            ]
+        )
+        assert ret == 1
+        assert (out_dir / "pkg" / "mod.pyi").exists()
 
     def test_non_python_file_skipped(self, tmp_dir):
         txt = tmp_dir / "readme.txt"
@@ -167,6 +298,32 @@ class TestMain:
         ret = main([str(link), "-q"])
         assert ret == 1
         assert not (tmp_dir / "link.pyi").exists()
+
+    def test_symlink_file_skipped_when_requested(self, tmp_dir):
+        src = tmp_dir / "target.py"
+        link = tmp_dir / "link.py"
+        _write(src, "x: int = 1\n")
+        link.symlink_to(src)
+        ret = main([str(link), "--input-symlinks", "skip", "-q"])
+        assert ret == 0
+        assert not (tmp_dir / "link.pyi").exists()
+
+    def test_max_files_applies_to_explicit_files(self, tmp_dir):
+        a = _write(tmp_dir / "a.py", "x: int = 1\n")
+        b = _write(tmp_dir / "b.py", "y: int = 2\n")
+        ret = main([str(a), str(b), "--max-files", "1", "--overwrite", "-q"])
+        assert ret == 1
+        assert (tmp_dir / "a.pyi").exists()
+        assert not (tmp_dir / "b.pyi").exists()
+
+    def test_json_diagnostics_are_json(self, tmp_dir, capsys):
+        bad = _write(tmp_dir / "bad.py", "def (broken\n")
+        ret = main([str(bad), "--overwrite", "--log-format", "json"])
+        assert ret == 1
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        for line in captured.err.strip().splitlines():
+            assert line.startswith("{")
 
     def test_path_through_symlinked_directory_rejected(self, tmp_dir):
         outside = tmp_dir / "outside"
@@ -224,7 +381,19 @@ class TestBuildParser:
         args = parser.parse_args(["file.py"])
         assert args.output_dir is None
         assert args.overwrite is False
+        assert args.existing == "skip"
+        assert args.input_symlinks == "reject"
+        assert args.traversal_symlinks == "skip"
+        assert args.output_symlinks == "reject"
+        assert args.output_scope == "any"
+        assert args.collision_policy == "fail"
+        assert args.no_recursive is False
+        assert args.include_hidden is False
         assert args.include_private is False
+        assert args.import_mode == "needed"
+        assert args.decorator_mode == "core"
+        assert args.type_alias_mode == "safe"
+        assert args.log_format == "text"
         assert args.verbose is False
         assert args.quiet is False
 
@@ -240,7 +409,7 @@ class TestProcessFileEdgeCases:
         out = tmp_dir / "mod.pyi"
         _write(src, "x: int = 1\n")
         process_file(src, out, verbose=True)
-        assert "generated" in capsys.readouterr().out
+        assert "generated" in capsys.readouterr().err
 
     def test_generic_exception(self, tmp_dir, monkeypatch):
         """Test the generic Exception handler in process_file."""

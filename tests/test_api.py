@@ -5,9 +5,12 @@ from pathlib import Path
 import pytest
 
 from tiny_stubgen import (
+    GenerationPolicy,
+    IOPolicy,
     StubEmitter,
     StubExtractor,
     generate_stub,
+    generate_stubs_for_path,
     postprocess,
 )
 
@@ -66,6 +69,51 @@ x = 1
         assert "x: int" in stub
         assert not marker.exists()
 
+    def test_generation_policy_controls_import_exposure(self):
+        source = "import os\nx: int = 1\n"
+        assert "import os" in generate_stub(source)
+        safe_stub = generate_stub(source, policy=GenerationPolicy.safe())
+        assert "import os" not in safe_stub
+
+    def test_generation_policy_controls_docstrings(self):
+        source = '"""private docs"""\nx: int = 1\n'
+        assert "private docs" not in generate_stub(source)
+        stub = generate_stub(
+            source,
+            policy=GenerationPolicy.default().replace(include_docstrings=True),
+        )
+        assert "private docs" in stub
+
+    def test_generate_stubs_for_path(self, tmp_path: Path):
+        src_dir = tmp_path / "src"
+        out_dir = tmp_path / "out"
+        src_dir.mkdir()
+        (src_dir / "mod.py").write_text("x: int = 1\n", encoding="utf-8")
+
+        result = generate_stubs_for_path(
+            [src_dir],
+            output_dir=out_dir,
+            io_policy=IOPolicy.default().replace(
+                existing="overwrite",
+                output_scope="any",
+            ),
+        )
+
+        assert result.ok
+        assert result.success_count == 1
+        assert (out_dir / "mod.pyi").exists()
+
+    def test_generate_stubs_for_path_rejects_default_in_place(self, tmp_path: Path):
+        src = tmp_path / "mod.py"
+        src.write_text("x: int = 1\n", encoding="utf-8")
+
+        result = generate_stubs_for_path([src])
+
+        assert not result.ok
+        assert result.error_count == 1
+        assert result.files[0].reason == "in-place output disabled"
+        assert not (tmp_path / "mod.pyi").exists()
+
 
 class TestPublicImports:
     def test_extractor_importable(self):
@@ -86,3 +134,13 @@ class TestPublicImports:
         result = emitter.emit()
         assert "x: int" in result
         assert "y: str" in result
+
+
+class TestPolicies:
+    def test_generation_policy_validates_choices(self):
+        with pytest.raises(ValueError, match="import_mode"):
+            GenerationPolicy(import_mode="invalid")  # type: ignore[arg-type]
+
+    def test_io_policy_validates_limits(self):
+        with pytest.raises(ValueError, match="max_files"):
+            IOPolicy(max_files=-1)

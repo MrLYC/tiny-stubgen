@@ -216,24 +216,29 @@ def greet(name: Any, greeting: str = ...) -> str: ...
 无需落盘，直接在内存中将源码转为 stub 内容：
 
 ```python
-from tiny_stubgen import generate_stub
+from tiny_stubgen import GenerationPolicy, generate_stub
 
 source = open("example.py").read()
-stub = generate_stub(source)
+stub = generate_stub(source, policy=GenerationPolicy.default())
 print(stub)
 ```
 
-也可以导入核心组件自行组装管线。注意这些高级组件接口目前不承诺稳定；稳定公共 API 仅包括 `generate_stub` 和 `__version__`：
+`GenerationPolicy.default()` 保持历史兼容输出；公开生成或处理不可信源码时，可以显式使用 `GenerationPolicy.safe()` 或 `GenerationPolicy.strict()` 降低泄露面。
+
+也可以使用批量路径 API，并通过策略对象控制安全边界：
 
 ```python
-from tiny_stubgen import StubExtractor, StubEmitter, postprocess
+from tiny_stubgen import IOPolicy, generate_stubs_for_path
 
-extractor = StubExtractor(source)
-module = extractor.extract()
-module = postprocess(module, include_private=True)
-emitter = StubEmitter(module, include_private=True)
-print(emitter.emit())
+result = generate_stubs_for_path(
+    ["src"],
+    output_dir="stubs",
+    io_policy=IOPolicy.default().replace(existing="overwrite"),
+)
+assert result.ok
 ```
+
+稳定公共 API 包括 `generate_stub`、`generate_stubs_for_path`、策略对象和 `__version__`。核心组件 `StubExtractor`、`StubEmitter`、`postprocess` 可用于自定义流水线，但内部模型可能随功能演进调整。
 
 ## CLI 参数
 
@@ -242,7 +247,18 @@ print(emitter.emit())
 | `PATH` | 要处理的 Python 文件或目录（支持多个） |
 | `-o, --output-dir` | 输出目录（默认：与源文件同目录） |
 | `--overwrite` | 覆盖已存在的 .pyi 文件 |
+| `--existing` | 已存在输出文件的处理方式 |
+| `--input-symlinks` / `--traversal-symlinks` / `--output-symlinks` | 控制 symlink 输入、遍历和输出策略 |
+| `--output-scope` / `--collision-policy` | 控制输出范围和多输入输出碰撞 |
+| `--no-recursive` / `--include-hidden` | 控制目录遍历范围 |
 | `--include-private` | 包含以 `_` 开头的私有名称 |
+| `--ignore-all` | 忽略 `__all__` |
+| `--import-mode` | 控制导入输出范围：`typing-only` / `needed` / `all` |
+| `--decorator-mode` | 控制装饰器输出范围：`none` / `core` / `all-safe` |
+| `--emit-typing-assignments` | 输出安全的 `TypeVar` / `ParamSpec` 等赋值 |
+| `--emit-class-keywords` | 输出安全的类关键字 |
+| `--no-class-bases` | 不输出类基类 |
+| `--no-conditionals` | 不输出平台/版本条件块 |
 | `-v, --verbose` | 详细输出 |
 | `-q, --quiet` | 静默模式，仅显示错误 |
 | `--version` | 显示版本号 |

@@ -4,30 +4,60 @@ import ast
 
 from tiny_stubgen.emitter import StubEmitter
 from tiny_stubgen.extractor import StubExtractor
+from tiny_stubgen.policies import GenerationPolicy
 from tiny_stubgen.resolver import postprocess
 
 
-def _generate_stub(source: str, *, include_private: bool = False) -> str:
+def _generate_stub(
+    source: str,
+    *,
+    include_private: bool = False,
+    policy: GenerationPolicy | None = None,
+) -> str:
     """Helper: source -> stub text."""
-    extractor = StubExtractor(source)
+    resolved_policy = policy or GenerationPolicy.default()
+    if include_private:
+        resolved_policy = resolved_policy.replace(include_private=True)
+    extractor = StubExtractor(source, policy=resolved_policy)
     module = extractor.extract()
-    module = postprocess(module, include_private=include_private)
-    emitter = StubEmitter(module, include_private=include_private)
+    module = postprocess(module, policy=resolved_policy)
+    emitter = StubEmitter(module, policy=resolved_policy)
     return emitter.emit()
 
 
 class TestImportEmission:
     def test_simple_import(self):
-        stub = _generate_stub("import os")
+        stub = _generate_stub("import os", policy=GenerationPolicy.compat())
         assert "import os" in stub
 
     def test_from_import(self):
-        stub = _generate_stub("from os.path import join")
+        stub = _generate_stub(
+            "from os.path import join",
+            policy=GenerationPolicy.compat(),
+        )
         assert "from os.path import join" in stub
 
     def test_star_import(self):
-        stub = _generate_stub("from os import *")
+        stub = _generate_stub("from os import *", policy=GenerationPolicy.compat())
         assert "from os import *" in stub
+
+    def test_safe_policy_skips_unused_runtime_import(self):
+        stub = _generate_stub("import os\nx: int = 1\n", policy=GenerationPolicy.safe())
+        assert "import os" not in stub
+        assert "x: int" in stub
+
+    def test_annotation_mode_any_does_not_keep_annotation_only_import(self):
+        source = """
+from secret_pkg import SecretType
+def f(value: SecretType) -> SecretType: ...
+"""
+        stub = _generate_stub(
+            source,
+            policy=GenerationPolicy.safe().replace(annotation_mode="any"),
+        )
+        assert "secret_pkg" not in stub
+        assert "SecretType" not in stub
+        assert "Any" in stub
 
     def test_typing_import_auto_added(self):
         stub = _generate_stub("x = []")
@@ -230,7 +260,11 @@ class Point:
     y: float
     z: float = 0.0
 """
-        stub = _generate_stub(source)
+        stub = _generate_stub(
+            source,
+            policy=GenerationPolicy.default().replace(emit_dataclass_decorators=True),
+        )
+        assert "from dataclasses import dataclass" in stub
         assert "@dataclass" in stub
         assert "class Point:" in stub
         assert "x: float" in stub
@@ -303,7 +337,10 @@ class TestTypingAssignments:
 from typing import TypeVar
 T = TypeVar("T", bound=int)
 """
-        stub = _generate_stub(source)
+        stub = _generate_stub(
+            source,
+            policy=GenerationPolicy.default().replace(emit_typing_assignments=True),
+        )
         assert "T = TypeVar('T', bound=int)" in stub
         assert "T:" not in stub
 
@@ -312,7 +349,10 @@ T = TypeVar("T", bound=int)
 from typing import ParamSpec
 P = ParamSpec("P")
 """
-        stub = _generate_stub(source)
+        stub = _generate_stub(
+            source,
+            policy=GenerationPolicy.default().replace(emit_typing_assignments=True),
+        )
         assert "P = ParamSpec('P')" in stub
 
 
@@ -360,7 +400,7 @@ __all__ = ["ClassA", "ClassB", "helper"]
         source = """
 from os.path import join, exists
 """
-        stub = _generate_stub(source)
+        stub = _generate_stub(source, policy=GenerationPolicy.compat())
         assert "from os.path import join, exists" in stub
         assert "as join" not in stub
 
@@ -401,11 +441,18 @@ else:
 
 class TestImportEdgeCases:
     def test_import_with_alias(self):
-        stub = _generate_stub("import numpy as np")
+        stub = _generate_stub(
+            "import numpy as np",
+            policy=GenerationPolicy.compat(),
+        )
         assert "import numpy as np" in stub
 
     def test_star_import_with_level(self):
-        stub = _generate_stub("from . import *", include_private=True)
+        stub = _generate_stub(
+            "from . import *",
+            include_private=True,
+            policy=GenerationPolicy.compat(),
+        )
         assert "from . import *" in stub
 
 
@@ -465,7 +512,11 @@ class TestClassEdgeCases:
 class Meta(type, metaclass=type):
     ...
 """
-        stub = _generate_stub(source, include_private=True)
+        stub = _generate_stub(
+            source,
+            include_private=True,
+            policy=GenerationPolicy.default().replace(emit_class_keywords=True),
+        )
         assert "metaclass=type" in stub
 
     def test_attribute_no_annotation_uses_any(self):
@@ -622,7 +673,11 @@ from dataclasses import dataclass
 class C:
     x: int
 """
-        result = _generate_stub(source, include_private=True)
+        result = _generate_stub(
+            source,
+            include_private=True,
+            policy=GenerationPolicy.default().replace(emit_dataclass_decorators=True),
+        )
         assert "__import__" not in result
         assert "@dataclass" in result
         assert "frozen" not in result

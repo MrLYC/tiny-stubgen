@@ -5,6 +5,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 from tiny_stubgen.utils import (
     is_dunder,
     is_private,
@@ -119,6 +121,17 @@ class TestWalkPythonFiles:
         files = list(walk_python_files(tmp_path))
         assert len(files) == 0
 
+    def test_skips_hidden_files(self, tmp_path: Path):
+        (tmp_path / ".hidden.py").touch()
+        assert list(walk_python_files(tmp_path)) == []
+
+    def test_include_hidden_dirs(self, tmp_path: Path):
+        hidden = tmp_path / ".hidden"
+        hidden.mkdir()
+        (hidden / "mod.py").touch()
+        files = list(walk_python_files(tmp_path, include_hidden=True))
+        assert [f.name for f in files] == ["mod.py"]
+
     def test_recurses_subdirs(self, tmp_path: Path):
         sub = tmp_path / "pkg"
         sub.mkdir()
@@ -148,6 +161,23 @@ class TestWalkPythonFiles:
         files = list(walk_python_files(root))
         names = [f.name for f in files]
         assert names == ["inside.py"]
+
+    def test_rejects_symlinked_directories(self, tmp_path: Path):
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        root = tmp_path / "root"
+        root.mkdir()
+        (root / "link").symlink_to(outside, target_is_directory=True)
+        with pytest.raises(OSError, match="symlink path rejected"):
+            list(walk_python_files(root, symlinks="reject"))
+
+    def test_max_depth(self, tmp_path: Path):
+        sub = tmp_path / "pkg"
+        sub.mkdir()
+        (tmp_path / "top.py").touch()
+        (sub / "mod.py").touch()
+        files = list(walk_python_files(tmp_path, max_depth=0))
+        assert [f.name for f in files] == ["top.py"]
 
     def test_skips_symlinked_root(self, tmp_path: Path):
         outside = tmp_path / "outside"

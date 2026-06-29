@@ -9,6 +9,8 @@ import stat
 from pathlib import Path
 from typing import Iterator
 
+from .policies import DunderPolicy, SymlinkPolicy
+
 # Directories to skip when walking for Python files
 _SKIP_DIRS = {
     "__pycache__",
@@ -28,7 +30,13 @@ _SKIP_DIRS = {
 
 
 def walk_python_files(
-    directory: Path, *, _seen: set[tuple[int, int]] | None = None
+    directory: Path,
+    *,
+    symlinks: SymlinkPolicy = "skip",
+    recursive: bool = True,
+    include_hidden: bool = False,
+    max_depth: int | None = None,
+    _seen: set[tuple[int, int]] | None = None,
 ) -> Iterator[Path]:
     """Yield all .py files in directory, skipping common non-source dirs.
 
@@ -38,16 +46,28 @@ def walk_python_files(
     if _seen is None:
         _seen = set()
 
-    stack = [directory]
+    stack = [(directory, 0)]
     while stack:
-        current = stack.pop()
+        current, depth = stack.pop()
+        if max_depth is not None and depth > max_depth:
+            continue
 
         try:
             stat_result = current.stat(follow_symlinks=False)
         except OSError:
             continue
 
-        if stat.S_ISLNK(stat_result.st_mode) or not stat.S_ISDIR(stat_result.st_mode):
+        if stat.S_ISLNK(stat_result.st_mode):
+            if symlinks == "reject":
+                raise OSError(f"symlink directory rejected: {current}")
+            if symlinks == "skip":
+                continue
+            try:
+                stat_result = current.stat(follow_symlinks=True)
+            except OSError:
+                continue
+
+        if not stat.S_ISDIR(stat_result.st_mode):
             continue
 
         key = (stat_result.st_dev, stat_result.st_ino)
@@ -64,21 +84,30 @@ def walk_python_files(
         subdirs: list[Path] = []
         for child in children:
             try:
-                if child.is_symlink():
+                if child.name in _SKIP_DIRS:
                     continue
-                if child.is_dir(follow_symlinks=False):
-                    if child.name in _SKIP_DIRS or child.name.startswith("."):
+                if not include_hidden and child.name.startswith("."):
+                    continue
+                if child.is_symlink():
+                    if symlinks == "reject":
+                        raise OSError(f"symlink path rejected: {child.path}")
+                    if symlinks == "skip":
+                        continue
+                if child.is_dir(follow_symlinks=symlinks == "follow"):
+                    if not recursive:
                         continue
                     subdirs.append(Path(child.path))
                 elif (
-                    child.is_file(follow_symlinks=False)
+                    child.is_file(follow_symlinks=symlinks == "follow")
                     and Path(child.name).suffix == ".py"
                 ):
                     yield Path(child.path)
             except OSError:
+                if symlinks == "reject":
+                    raise
                 continue
 
-        stack.extend(reversed(subdirs))
+        stack.extend((path, depth + 1) for path in reversed(subdirs))
 
 
 def unparse_annotation(node: ast.expr) -> str:
@@ -91,6 +120,62 @@ def is_dunder(name: str) -> bool:
     return name.startswith("__") and name.endswith("__") and len(name) > 4
 
 
+_MAGIC_DUNDER_NAMES = frozenset(
+    {
+        "__aenter__",
+        "__aexit__",
+        "__aiter__",
+        "__anext__",
+        "__await__",
+        "__bool__",
+        "__bytes__",
+        "__call__",
+        "__class_getitem__",
+        "__contains__",
+        "__del__",
+        "__delattr__",
+        "__delete__",
+        "__delitem__",
+        "__dir__",
+        "__enter__",
+        "__eq__",
+        "__exit__",
+        "__format__",
+        "__ge__",
+        "__get__",
+        "__getattr__",
+        "__getattribute__",
+        "__getitem__",
+        "__gt__",
+        "__hash__",
+        "__init__",
+        "__init_subclass__",
+        "__iter__",
+        "__le__",
+        "__len__",
+        "__lt__",
+        "__missing__",
+        "__ne__",
+        "__new__",
+        "__next__",
+        "__repr__",
+        "__reversed__",
+        "__set__",
+        "__set_name__",
+        "__setattr__",
+        "__setitem__",
+        "__sizeof__",
+        "__str__",
+        "__subclasshook__",
+    }
+)
+
+
+def is_magic_dunder(name: str) -> bool:
+    """Check if name is a recognized Python magic dunder."""
+    return name in _MAGIC_DUNDER_NAMES
+
+
 def is_private(name: str) -> bool:
     """Check if name is private (starts with _ but not dunder)."""
     return name.startswith("_") and not is_dunder(name)
@@ -99,6 +184,19 @@ def is_private(name: str) -> bool:
 def is_public(name: str) -> bool:
     """Check if name should be exported by default."""
     return not name.startswith("_") or is_dunder(name)
+
+
+def is_public_name(name: str, *, dunder_policy: DunderPolicy = "magic") -> bool:
+    """Check if name should be exported under a dunder policy."""
+    if not name.startswith("_"):
+        return True
+    if not is_dunder(name):
+        return False
+    if dunder_policy == "all":
+        return True
+    if dunder_policy == "none":
+        return False
+    return is_magic_dunder(name)
 
 
 def is_valid_identifier(name: str) -> bool:

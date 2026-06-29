@@ -18,6 +18,7 @@ from .models import (
     ParameterKind,
     VariableInfo,
 )
+from .policies import GenerationPolicy
 from .utils import (
     is_valid_identifier,
     safe_unparse_class_keyword_expr,
@@ -36,9 +37,16 @@ class StubExtractor(ast.NodeVisitor):
         module_stub = extractor.extract()
     """
 
-    def __init__(self, source: str, module_name: str = "") -> None:
+    def __init__(
+        self,
+        source: str,
+        module_name: str = "",
+        *,
+        policy: GenerationPolicy | None = None,
+    ) -> None:
         self.source = source
         self.module_name = module_name
+        self.policy = policy or GenerationPolicy.default()
         self._module = ModuleStub()
         self._in_type_checking = False
 
@@ -260,7 +268,7 @@ class StubExtractor(ast.NodeVisitor):
                 param = positional_params[offset + i]
                 param.default = "..."
                 # If no annotation, try to infer from default
-                if param.annotation is None:
+                if param.annotation is None and self.policy.infer_from_defaults:
                     inferred = infer_type_from_default(default)
                     if inferred:
                         param.annotation = inferred
@@ -270,7 +278,7 @@ class StubExtractor(ast.NodeVisitor):
         for param, kw_default in zip(kw_params, args.kw_defaults):
             if kw_default is not None:
                 param.default = "..."
-                if param.annotation is None:
+                if param.annotation is None and self.policy.infer_from_defaults:
                     inferred = infer_type_from_default(kw_default)
                     if inferred:
                         param.annotation = inferred
@@ -797,7 +805,7 @@ class StubExtractor(ast.NodeVisitor):
             self._in_type_checking = old
             return
 
-        if self._is_conditional_import(node):
+        if self.policy.emit_conditionals and self._is_conditional_import(node):
             block = self._extract_conditional_block(node)
             self._module.conditional_blocks.append(block)
 
